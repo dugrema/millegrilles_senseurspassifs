@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use log::{debug, error, info, warn};
 use millegrilles_common_rust::certificats::ValidateurX509;
 use millegrilles_common_rust::chrono as chrono;
-use millegrilles_common_rust::configuration::{charger_configuration, ConfigMessages};
+use millegrilles_common_rust::configuration::{charger_configuration, ConfigMessages, IsConfigNoeud};
 use millegrilles_common_rust::domaines::GestionnaireDomaine;
 use millegrilles_common_rust::futures::stream::FuturesUnordered;
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
@@ -32,8 +32,8 @@ static mut GESTIONNAIRES: [TypeGestionnaire; 4] = [TypeGestionnaire::None, TypeG
 
 /// Enum pour distinger les types de gestionnaires.
 #[derive(Clone, Debug)]
-enum TypeGestionnaire<'a> {
-    NoeudProtege(Arc<GestionnaireSenseursPassifs<'a>>),
+enum TypeGestionnaire {
+    NoeudProtege(Arc<GestionnaireSenseursPassifs>),
     None
 }
 
@@ -51,13 +51,18 @@ pub async fn run() {
 
 /// Fonction qui lit le certificat local et extrait les fingerprints idmg et de partition
 /// Conserve les gestionnaires dans la variable GESTIONNAIRES 'static
-fn charger_gestionnaires() -> Vec<&'static TypeGestionnaire<'static>> {
+fn charger_gestionnaires() -> Vec<&'static TypeGestionnaire> {
     // Charger une version simplifiee de la configuration - on veut le certificat associe a l'enveloppe privee
-    // let config = charger_configuration().expect("config");
+    let config = charger_configuration().expect("config");
+    let config_noeud = config.get_configuration_noeud();
+    let noeud_id = match &config_noeud.noeud_id {
+        Some(n) => n,
+        None => panic!("MG_NOEUD_ID n'est pas configure")
+    };
 
     // Inserer les gestionnaires dans la variable static - permet d'obtenir lifetime 'static
     unsafe {
-        GESTIONNAIRES[0] = TypeGestionnaire::NoeudProtege(Arc::new(GestionnaireSenseursPassifs { noeud_id: "DUMMY" }));
+        GESTIONNAIRES[0] = TypeGestionnaire::NoeudProtege(Arc::new(GestionnaireSenseursPassifs { noeud_id: noeud_id.to_owned() }));
 
         let mut vec_gestionnaires = Vec::new();
         vec_gestionnaires.extend(&GESTIONNAIRES);
@@ -65,7 +70,7 @@ fn charger_gestionnaires() -> Vec<&'static TypeGestionnaire<'static>> {
     }
 }
 
-async fn build(gestionnaires: Vec<&'static TypeGestionnaire<'_>>) -> (FuturesUnordered<JoinHandle<()>>, Arc<MiddlewareDb>) {
+async fn build(gestionnaires: Vec<&'static TypeGestionnaire>) -> (FuturesUnordered<JoinHandle<()>>, Arc<MiddlewareDb>) {
 
     // Recuperer configuration des Q de tous les domaines
     let queues = {
@@ -158,7 +163,7 @@ async fn executer(mut futures: FuturesUnordered<JoinHandle<()>>) {
 }
 
 /// Thread d'entretien
-async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnaires: Vec<&'static TypeGestionnaire<'_>>)
+async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnaires: Vec<&'static TypeGestionnaire>)
     where M: Middleware
 {
     let mut certificat_emis = false;

@@ -12,8 +12,8 @@ use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::domaines::GestionnaireDomaine;
 use millegrilles_common_rust::formatteur_messages::MessageMilleGrille;
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::middleware::{Middleware, sauvegarder_transaction_recue};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use millegrilles_common_rust::mongodb::options::{CountOptions, FindOptions, Hint, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::MessageValideAction;
@@ -23,22 +23,54 @@ use millegrilles_common_rust::tokio::time::{Duration, sleep};
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::transactions::{TraiterTransaction, Transaction, TransactionImpl};
 use millegrilles_common_rust::verificateur::VerificateurMessage;
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao};
 
 const DOMAINE_NOM: &str = "SenseursPassifs";
-pub const NOM_COLLECTION_CLES: &str = "SenseursPassifs/cles";
-pub const NOM_COLLECTION_TRANSACTIONS: &str = "SenseursPassifs";
+// pub const NOM_COLLECTION_LECTURES: &str = "SenseursPassifs_{NOEUD_ID}/lectures";
+// pub const NOM_COLLECTION_TRANSACTIONS: &str = "SenseursPassifs_{NOEUD_ID}";
 
 const NOM_Q_TRANSACTIONS: &str = "SenseursPassifs/transactions";
 const NOM_Q_VOLATILS: &str = "SenseursPassifs/volatils";
 const NOM_Q_TRIGGERS: &str = "SenseursPassifs/triggers";
 
+const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
+const REQUETE_VITRINE_DASHBOARD: &str = "dashboard";
+const REQUETE_AFFICHAGE_LCD_NOEUD: &str = "affichageLcdNoeud";
+const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
+const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
+
+const EVENEMENT_DOMAINE_LECTURE: &str = "lecture";
+const EVENEMENT_DOMAINE_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
+
+const TRANSACTION_LECTURE: &str = "lecture";
+const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
+const TRANSACTION_MAJ_NOEUD: &str = "majNoeud";
+const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
+
+const INDEX_LECTURES: &str = "lectures";
+
+const CHAMP_NOEUD_ID: &str = "noeud_id";
+const CHAMP_UUID_SENSEURS: &str = "uuid_senseur";
+
 #[derive(Clone, Debug)]
-pub struct GestionnaireSenseursPassifs<'a> {
-    pub noeud_id: &'a str,
+pub struct GestionnaireSenseursPassifs {
+    pub noeud_id: String,
+}
+
+impl GestionnaireSenseursPassifs {
+    fn get_collection_lectures(&self) -> String {
+        let noeud_id_tronque = self.get_noeud_id_tronque();
+        format!("SenseursPassifs_{}/lectures", noeud_id_tronque)
+    }
+
+    /// Noeud id hache sur 12 characteres pour noms d'index, tables
+    fn get_noeud_id_tronque(&self) -> String {
+        hacher_uuid(self.noeud_id.as_str(), Some(12)).expect("hachage")
+    }
 }
 
 #[async_trait]
-impl TraiterTransaction for GestionnaireSenseursPassifs<'_> {
+impl TraiterTransaction for GestionnaireSenseursPassifs {
     async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao
     {
@@ -47,12 +79,17 @@ impl TraiterTransaction for GestionnaireSenseursPassifs<'_> {
 }
 
 #[async_trait]
-impl GestionnaireDomaine for GestionnaireSenseursPassifs<'_> {
+impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     fn get_nom_domaine(&self) -> String { String::from(DOMAINE_NOM) }
 
-    fn get_collection_transactions(&self) -> String { String::from(NOM_COLLECTION_TRANSACTIONS) }
+    fn get_collection_transactions(&self) -> String {
+        let noeud_id_tronque = self.get_noeud_id_tronque();
+        format!("SenseursPassifs_{}", noeud_id_tronque)
+    }
 
-    fn get_collections_documents(&self) -> Vec<String> { vec![String::from(NOM_COLLECTION_CLES)] }
+    fn get_collections_documents(&self) -> Vec<String> { vec![
+        self.get_collection_lectures()
+    ] }
 
     fn get_q_transactions(&self) -> String { String::from(NOM_Q_TRANSACTIONS) }
 
@@ -67,7 +104,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs<'_> {
     }
 
     async fn preparer_index_mongodb_custom<M>(&self, middleware: &M) -> Result<(), String> where M: MongoDao {
-        preparer_index_mongodb_custom(middleware).await
+        preparer_index_mongodb_custom(middleware, &self).await
     }
 
     async fn consommer_requete<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>> where M: Middleware + 'static {
@@ -161,23 +198,25 @@ pub fn preparer_queues() -> Vec<QueueType> {
 }
 
 /// Creer index MongoDB
-pub async fn preparer_index_mongodb_custom<M>(middleware: &M) -> Result<(), String>
+pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), String>
     where M: MongoDao
 {
-    // // Index hachage_bytes
-    // let options_unique_cles_hachage_bytes = IndexOptions {
-    //     nom_index: Some(String::from(INDEX_CLES_HACHAGE_BYTES)),
-    //     unique: true
-    // };
-    // let champs_index_cles_hachage_bytes = vec!(
-    //     ChampIndex {nom_champ: String::from(CHAMP_HACHAGE_BYTES), direction: 1},
-    // );
-    // middleware.create_index(
-    //     nom_collection_cles,
-    //     champs_index_cles_hachage_bytes,
-    //     Some(options_unique_cles_hachage_bytes)
-    // ).await?;
-    //
+    // let noeud_id_tronque = gestionnaire.get_noeud_id_tronque();
+
+    // Index lectures
+    let options_lectures = IndexOptions {
+        nom_index: Some(String::from(INDEX_LECTURES)),
+        unique: false
+    };
+    let champs_index_lectures = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_NOEUD_ID), direction: 1},
+    );
+    middleware.create_index(
+        gestionnaire.get_collection_lectures().as_str(),
+        champs_index_lectures,
+        Some(options_lectures)
+    ).await?;
+
     // // Index cles non dechiffrable
     // let options_non_dechiffrables = IndexOptions {
     //     nom_index: Some(String::from(INDEX_NON_DECHIFFRABLES)),
@@ -214,7 +253,7 @@ where M: Middleware + 'static {
     Ok(())
 }
 
-async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs<'_>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage
 {
     debug!("Consommer requete : {:?}", &message.message);
@@ -285,7 +324,7 @@ where
     }
 }
 
-async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionnaire_ca: &GestionnaireSenseursPassifs<'_>)
+async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionnaire_ca: &GestionnaireSenseursPassifs)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where M: GenerateurMessages + MongoDao + VerificateurMessage
 {
