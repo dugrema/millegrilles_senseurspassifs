@@ -60,9 +60,14 @@ pub struct GestionnaireSenseursPassifs {
 }
 
 impl GestionnaireSenseursPassifs {
-    fn get_collection_lectures(&self) -> String {
+    fn get_collection_senseurs(&self) -> String {
         let noeud_id_tronque = self.get_noeud_id_tronque();
-        format!("SenseursPassifs_{}/lectures", noeud_id_tronque)
+        format!("SenseursPassifs_{}/senseurs", noeud_id_tronque)
+    }
+
+    fn get_collection_noeuds(&self) -> String {
+        let noeud_id_tronque = self.get_noeud_id_tronque();
+        format!("SenseursPassifs_{}/noeuds", noeud_id_tronque)
     }
 
     /// Noeud id hache sur 12 characteres pour noms d'index, tables
@@ -76,7 +81,7 @@ impl TraiterTransaction for GestionnaireSenseursPassifs {
     async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao
     {
-        aiguillage_transaction(middleware, transaction).await
+        aiguillage_transaction(middleware, transaction, &self).await
     }
 }
 
@@ -90,7 +95,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     }
 
     fn get_collections_documents(&self) -> Vec<String> { vec![
-        self.get_collection_lectures()
+        self.get_collection_senseurs()
     ] }
 
     fn get_q_transactions(&self) -> String {
@@ -124,7 +129,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     }
 
     async fn consommer_transaction<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>> where M: Middleware + 'static {
-        consommer_transaction(middleware, message).await
+        consommer_transaction(middleware, message, self).await
     }
 
     async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>> where M: Middleware + 'static {
@@ -140,7 +145,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     }
 
     async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T) -> Result<Option<MessageMilleGrille>, String> where M: ValidateurX509 + GenerateurMessages + MongoDao, T: Transaction {
-        aiguillage_transaction(middleware, transaction).await
+        aiguillage_transaction(middleware, transaction, &self).await
     }
 }
 
@@ -188,10 +193,34 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ));
 
     let mut rk_transactions = Vec::new();
-    // rk_transactions.push(ConfigRoutingExchange {
-    //     routing_key: format!("transaction.{}.{}", DOMAINE_NOM, TRANSACTION_CLE).into(),
-    //     exchange: Securite::L4Secure
-    // });
+    rk_transactions.push(ConfigRoutingExchange {
+        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
+        exchange: Securite::L4Secure
+    });
+    rk_transactions.push(ConfigRoutingExchange {
+        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
+        exchange: Securite::L3Protege
+    });
+    rk_transactions.push(ConfigRoutingExchange {
+        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
+        exchange: Securite::L2Prive
+    });
+    rk_transactions.push(ConfigRoutingExchange {
+        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_MAJ_SENSEUR).into(),
+        exchange: Securite::L4Secure
+    });
+    rk_transactions.push(ConfigRoutingExchange {
+        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_MAJ_NOEUD).into(),
+        exchange: Securite::L4Secure
+    });
+    rk_transactions.push(ConfigRoutingExchange {
+        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_SUPPRESSION_SENSEUR).into(),
+        exchange: Securite::L3Protege
+    });
+    rk_transactions.push(ConfigRoutingExchange {
+        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_SUPPRESSION_SENSEUR).into(),
+        exchange: Securite::L4Secure
+    });
 
     // Queue de transactions
     queues.push(QueueType::ExchangeQueue (
@@ -215,7 +244,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
 {
     // let noeud_id_tronque = gestionnaire.get_noeud_id_tronque();
 
-    // Index lectures
+    // Index senseurs
     let options_lectures_noeud = IndexOptions {
         nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
         unique: false
@@ -224,10 +253,11 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         ChampIndex {nom_champ: String::from(CHAMP_NOEUD_ID), direction: 1},
     );
     middleware.create_index(
-        gestionnaire.get_collection_lectures().as_str(),
+        gestionnaire.get_collection_senseurs().as_str(),
         champs_index_lectures_noeud,
         Some(options_lectures_noeud)
     ).await?;
+
     let options_lectures_senseurs = IndexOptions {
         nom_index: Some(String::from(INDEX_LECTURES_SENSEURS)),
         unique: true
@@ -236,25 +266,24 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         ChampIndex {nom_champ: String::from(CHAMP_UUID_SENSEUR), direction: 1},
     );
     middleware.create_index(
-        gestionnaire.get_collection_lectures().as_str(),
+        gestionnaire.get_collection_senseurs().as_str(),
         champs_index_lectures_senseurs,
         Some(options_lectures_senseurs)
     ).await?;
 
-    // // Index cles non dechiffrable
-    // let options_non_dechiffrables = IndexOptions {
-    //     nom_index: Some(String::from(INDEX_NON_DECHIFFRABLES)),
-    //     unique: false,
-    // };
-    // let champs_index_non_dechiffrables = vec!(
-    //     ChampIndex {nom_champ: String::from(CHAMP_NON_DECHIFFRABLE), direction: 1},
-    //     ChampIndex {nom_champ: String::from(CHAMP_CREATION), direction: 1},
-    // );
-    // middleware.create_index(
-    //     nom_collection_cles,
-    //     champs_index_non_dechiffrables,
-    //     Some(options_non_dechiffrables)
-    // ).await?;
+    // Index noeuds
+    let options_lectures_noeud = IndexOptions {
+        nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
+        unique: true
+    };
+    let champs_index_lectures_noeud = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_NOEUD_ID), direction: 1},
+    );
+    middleware.create_index(
+        gestionnaire.get_collection_noeuds().as_str(),
+        champs_index_lectures_noeud,
+        Some(options_lectures_noeud)
+    ).await?;
 
     Ok(())
 }
@@ -323,24 +352,26 @@ where
     }
 }
 
-
-async fn consommer_transaction<M>(middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+async fn consommer_transaction<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
     debug!("senseurspassifs.consommer_transaction Consommer transaction : {:?}", &m.message);
 
-    // Autorisation : doit etre de niveau 3.protege ou 4.secure
-    match m.verifier_exchanges(vec![Securite::L3Protege, Securite::L4Secure]) {
+    // Autorisation : doit etre de niveau 2.prive, 3.protege ou 4.secure
+    match m.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
         true => Ok(()),
         false => Err(format!("senseurspassifs.consommer_transaction: Trigger cedule autorisation invalide (pas 4.secure)")),
     }?;
 
     match m.action.as_str() {
-        // TRANSACTION_CLE  => {
-        //     sauvegarder_transaction_recue(middleware, m, NOM_COLLECTION_TRANSACTIONS).await?;
-        //     Ok(None)
-        // },
+        TRANSACTION_MAJ_SENSEUR |
+        TRANSACTION_MAJ_NOEUD |
+        TRANSACTION_LECTURE |
+        TRANSACTION_SUPPRESSION_SENSEUR => {
+            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions()).await?;
+            Ok(None)
+        },
         _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", m.action))?,
     }
 }
@@ -431,49 +462,51 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
 //     Ok(middleware.reponse_ok()?)
 // }
 
-async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T) -> Result<Option<MessageMilleGrille>, String>
+async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, String>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao,
         T: Transaction
 {
     match transaction.get_action() {
-        // TRANSACTION_CLE => transaction_cle(middleware, transaction).await,
+        TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), transaction.get_action())),
     }
 }
 
-// async fn transaction_cle<M, T>(middleware: &M, transaction: T) -> Result<Option<MessageMilleGrille>, String>
-//     where
-//         M: GenerateurMessages + MongoDao,
-//         T: Transaction
-// {
-//     debug!("transaction_catalogue_horaire Consommer transaction : {:?}", &transaction);
-//     let transaction_cle: TransactionCle = match transaction.clone().convertir::<TransactionCle>() {
-//         Ok(t) => t,
-//         Err(e) => Err(format!("maitredescles_ca.transaction_cle Erreur conversion transaction : {:?}", e))?
-//     };
-//     let hachage_bytes = transaction_cle.hachage_bytes.as_str();
-//     let mut doc_bson_transaction = transaction.contenu();
-//
-//     doc_bson_transaction.insert("non_dechiffrable", true);  // Flag non-dechiffrable par defaut (setOnInsert seulement)
-//
-//     let filtre = doc! {CHAMP_HACHAGE_BYTES: hachage_bytes};
-//     let ops = doc! {
-//         "$set": {"dirty": false},
-//         "$setOnInsert": doc_bson_transaction,
-//         "$currentDate": {CHAMP_MODIFICATION: true}
-//     };
-//     let opts = UpdateOptions::builder().upsert(true).build();
-//     let collection = middleware.get_collection(NOM_COLLECTION_CLES)?;
-//     debug!("transaction_cle update ops : {:?}", ops);
-//     let resultat = match collection.update_one(filtre, ops, opts).await {
-//         Ok(r) => r,
-//         Err(e) => Err(format!("maitredescles_ca.transaction_cle Erreur update_one sur transcation : {:?}", e))?
-//     };
-//     debug!("transaction_cle Resultat transaction update : {:?}", resultat);
-//
-//     Ok(None)
-// }
+async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_maj_senseur Consommer transaction : {:?}", &transaction);
+    let transaction_cle = match transaction.clone().convertir::<TransactionMajSenseur>() {
+        Ok(t) => t,
+        Err(e) => Err(format!("maitredescles_ca.transaction_cle Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_maj_senseur Transaction lue {:?}", transaction_cle);
+
+    let ops = doc! {
+        "$set": {
+            CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud,
+        },
+        "$setOnInsert": {
+            CHAMP_CREATION: Utc::now(),
+            CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur,
+        },
+        "$currentDate": {CHAMP_MODIFICATION: true}
+    };
+    let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur };
+    let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+    let opts = UpdateOptions::builder().upsert(true).build();
+    let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
+        Ok(r) => r,
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement transaction senseur : {:?}", e))?
+    };
+    debug!("transaction_maj_senseur Resultat ajout transaction : {:?}", resultat);
+
+    Ok(None)
+}
 
 // async fn requete_compter_cles_non_dechiffrables<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
 //     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
@@ -523,15 +556,27 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         },
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
-    let collection = middleware.get_collection(gestionnare.get_collection_lectures().as_str())?;
+    let collection = middleware.get_collection(gestionnare.get_collection_senseurs().as_str())?;
     let opts = UpdateOptions::builder().upsert(true).build();
     let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
+
+    // Si on a cree un nouvel element, creer le senseur (et potentiellement le noeud)
+    if let Some(uid) = resultat_update.upserted_id {
+        debug!("Creation nouvelle transaction pour senseur {}", lecture.uuid_senseur);
+        let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.noeud_id);
+        let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
+            .exchanges(vec![Securite::L4Secure])
+            .partition(&gestionnare.noeud_id)
+            .build();
+        middleware.soumettre_transaction(routage, &transaction, false).await?;
+    }
 
     // Bouncer l'evenement sur tous les exchanges appropries
     let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE)
         .exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])
         .build();
+
     match middleware.emettre_evenement(routage, &lecture).await {
         Ok(_) => (),
         Err(e) => warn!("senseurspassifs.evenement_domaine_lecture Erreur emission evenement lecture confirmee : {:?}", e)
@@ -553,6 +598,23 @@ struct LectureSenseur {
     #[serde(rename="type")]
     type_: String,
     valeur: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TransactionMajSenseur {
+    uuid_senseur: String,
+    uuid_noeud: String,
+}
+
+impl TransactionMajSenseur {
+    pub fn new<S, T>(uuid_senseur: S, uuid_noeud: T)  -> Self
+        where S: Into<String>, T: Into<String>
+    {
+        TransactionMajSenseur {
+            uuid_senseur: uuid_senseur.into(),
+            uuid_noeud: uuid_noeud.into(),
+        }
+    }
 }
 
 #[cfg(test)]

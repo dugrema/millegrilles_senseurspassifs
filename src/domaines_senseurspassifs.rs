@@ -174,7 +174,7 @@ async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnair
         for g in &gestionnaires {
             match g {
                 TypeGestionnaire::NoeudProtege(g) => {
-                    coll_docs_strings.extend(g.get_collections_documents());
+                    coll_docs_strings.push(g.get_collection_transactions());
                 },
                 TypeGestionnaire::None => ()
             }
