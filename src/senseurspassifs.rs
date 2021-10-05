@@ -528,6 +528,15 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
 
+    // Bouncer l'evenement sur tous les exchanges appropries
+    let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE)
+        .exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])
+        .build();
+    match middleware.emettre_evenement(routage, &lecture).await {
+        Ok(_) => (),
+        Err(e) => warn!("senseurspassifs.evenement_domaine_lecture Erreur emission evenement lecture confirmee : {:?}", e)
+    }
+
     Ok(())
 }
 

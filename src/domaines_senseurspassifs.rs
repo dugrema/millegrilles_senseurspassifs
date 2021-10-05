@@ -174,7 +174,7 @@ async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnair
         for g in &gestionnaires {
             match g {
                 TypeGestionnaire::NoeudProtege(g) => {
-                    coll_docs_strings.push(String::from(g.get_collection_transactions()));
+                    coll_docs_strings.extend(g.get_collections_documents());
                 },
                 TypeGestionnaire::None => ()
             }
@@ -182,18 +182,8 @@ async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnair
         coll_docs_strings
     };
 
-    let mut rechiffrage_complete = false;
     let mut prochain_entretien_transactions = chrono::Utc::now();
     let intervalle_entretien_transactions = chrono::Duration::minutes(5);
-
-    let mut prochain_sync = chrono::Utc::now();
-    let intervalle_sync = chrono::Duration::hours(6);
-
-    let mut prochaine_confirmation_ca = chrono::Utc::now();
-    let intervalle_confirmation_ca = chrono::Duration::minutes(15);
-
-    let mut prochain_chargement_certificats_autres = chrono::Utc::now();
-    let intervalle_chargement_certificats_autres = chrono::Duration::minutes(5);
 
     info!("domaines_senseurspassifs.entretien : Debut thread dans 5 secondes");
 
