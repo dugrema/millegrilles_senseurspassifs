@@ -365,7 +365,12 @@ where
     // Autorisation : doit etre de niveau 2.prive, 3.protege ou 4.secure
     match m.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
         true => Ok(()),
-        false => Err(format!("senseurspassifs.consommer_transaction: Trigger cedule autorisation invalide (pas 4.secure)")),
+        false => {
+            match m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
+                true => Ok(()),
+                false => Err(format!("senseurspassifs.consommer_transaction: Trigger cedule autorisation invalide (pas 4.secure ou proprietaire)"))
+            }
+        },
     }?;
 
     match m.action.as_str() {
@@ -474,6 +479,7 @@ async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestionnai
     match transaction.get_action() {
         TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
+        TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), transaction.get_action())),
     }
 }
@@ -574,6 +580,37 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
     }
 
     middleware.reponse_ok()
+}
+
+async fn transaction_suppression_senseur<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_suppression_senseur Consommer transaction : {:?}", &transaction);
+    let contenu_transaction = match transaction.clone().convertir::<TransactionSupprimerSenseur>() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_suppression_senseur Transaction lue {:?}", contenu_transaction);
+
+    {
+        let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
+        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let resultat = match collection.delete_one(filtre, None).await {
+            Ok(r) => r,
+            Err(e) => Err(format!("senseurspassifs.transaction_suppression_senseur Erreur traitement transaction senseur : {:?}", e))?
+        };
+        debug!("transaction_suppression_senseur Resultat suppression senseur : {:?}", resultat);
+    }
+
+    middleware.reponse_ok()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TransactionSupprimerSenseur {
+    uuid_senseur: String
 }
 
 async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -884,6 +921,7 @@ impl TransactionMajNoeud {
 
 #[cfg(test)]
 mod test_integration {
+    use std::convert::TryFrom;
     use millegrilles_common_rust::backup::CatalogueHoraire;
     use millegrilles_common_rust::formatteur_messages::MessageSerialise;
     use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
@@ -1050,4 +1088,43 @@ mod test_integration {
         futures.next().await.expect("resultat").expect("ok");
     }
 
+    #[tokio::test]
+    async fn test_transaction_suppression_senseur() {
+        setup("test_requete_get_noeud");
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let enveloppe_privee = middleware.get_enveloppe_privee();
+        let fingerprint = enveloppe_privee.fingerprint().as_str();
+
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        futures.push(tokio::spawn(async move {
+
+            let contenu = json!({"uuid_senseur": "7a2764fa-c457-4f25-af0d-0fc915439b21"});
+            let message_mg = MessageMilleGrille::new_signer(
+                enveloppe_privee.as_ref(),
+                &contenu,
+                DOMAINE_NOM.into(),
+                REQUETE_LISTE_NOEUDS.into(),
+                None::<&str>,
+                None
+            ).expect("message");
+            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+
+            // Injecter certificat utilise pour signer
+            message.certificat = Some(enveloppe_privee.enveloppe.clone());
+
+            // let mva = MessageValideAction::new(
+            //     message.clone(), "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+
+            let transaction = TransactionImpl::try_from(message).expect("treansaction");
+
+            let reponse = transaction_suppression_senseur(middleware.as_ref(), transaction, &gestionnaire)
+                .await.expect("requete");
+            debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
+
+            assert_eq!(true, reponse.is_some());
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
 }
