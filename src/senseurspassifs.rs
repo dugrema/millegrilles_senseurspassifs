@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use log::{debug, error, warn};
 use millegrilles_common_rust::async_trait::async_trait;
-use millegrilles_common_rust::bson::{doc, Document};
+use millegrilles_common_rust::bson::{DateTime, doc, Document};
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::chiffrage::CommandeSauvegarderCle;
-use millegrilles_common_rust::chrono::Utc;
+use millegrilles_common_rust::{chrono, chrono::Utc};
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::domaines::GestionnaireDomaine;
 use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
@@ -321,6 +321,7 @@ async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gest
         DOMAINE_NOM => {
             match message.action.as_str() {
                 REQUETE_LISTE_NOEUDS => requete_liste_noeuds(middleware, message, gestionnaire).await,
+                REQUETE_LISTE_SENSEURS_PAR_UUID => requete_liste_senseurs_par_uuid(middleware, message, gestionnaire).await,
                 _ => {
                     error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                     Ok(None)
@@ -577,8 +578,6 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_liste_noeuds Consommer requete : {:?}", & m.message);
-    // let requete: RequeteDechiffrage = m.message.get_msg().map_contenu(None)?;
-    // debug!("requete_compter_cles_non_dechiffrables cle parsed : {:?}", requete);
 
     let noeuds = {
         let filtre = doc! { };
@@ -606,24 +605,84 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
-// #[derive(Clone, Debug, Serialize, Deserialize)]
-// struct RequeteClesNonDechiffrable {
-//     limite: Option<u64>,
-//     page: Option<u64>,
-// }
+async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_liste_senseurs_par_uuid Consommer requete : {:?}", & m.message);
+    let requete: RequeteSenseursParUuid = m.message.get_msg().map_contenu(None)?;
+
+    let senseurs = {
+        let filtre = doc! { CHAMP_UUID_SENSEUR: {"$in": &requete.uuid_senseurs} };
+        let projection = doc! {
+            CHAMP_UUID_SENSEUR: 1,
+            CHAMP_NOEUD_ID: 1,
+            // CHAMP_MODIFICATION: 1,
+            "derniere_lecture": 1,
+            CHAMP_SENSEURS: 1,
+            "securite": 1,
+            "descriptif": 1,
+        };
+        let opts = FindOptions::builder().projection(projection).build();
+        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let mut curseur = collection.find(filtre, opts).await?;
+
+        let mut senseurs = Vec::new();
+        while let Some(d) = curseur.next().await {
+            let mut noeud: InformationSenseur = convertir_bson_deserializable(d?)?;
+            senseurs.push(noeud);
+        }
+
+        senseurs
+    };
+
+    let reponse = json!({ "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RequeteSenseursParUuid {
+    uuid_senseurs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct InformationSenseur {
+    uuid_senseur: String,
+    noeud_id: String,
+    derniere_lecture: Option<DateEpochSeconds>,
+    senseurs: Option<HashMap<String, LectureSenseur>>,
+    securite: Option<String>,
+    descriptif: Option<String>,
+}
 
 async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnare: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
-    let lecture: EvenementLecture = m.message.get_msg().map_contenu(None)?;
+    let mut lecture: EvenementLecture = m.message.get_msg().map_contenu(None)?;
     debug!("Evenement mappe : {:?}", lecture);
 
-    let filtre = doc! { CHAMP_UUID_SENSEUR: &lecture.uuid_senseur };
+    // Trouver date de la plus recente lecture
+    lecture.calculer_derniere_lecture();
+
+    let mut filtre = doc! { CHAMP_UUID_SENSEUR: &lecture.uuid_senseur };
+
+    // Convertir date en format DateTime pour conserver, ajouter filtre pour eviter de
+    // mettre a jour un senseur avec informations plus vieilles
+    let derniere_lecture_dt = match lecture.derniere_lecture.as_ref()  {
+        Some(l) => {
+            filtre.insert("derniere_lecture", doc! {"$lt": l.get_datetime().timestamp()});
+            Some(l.get_datetime())
+        },
+        None => None
+    };
+
     let senseurs = convertir_to_bson(&lecture.senseurs)?;
     let ops = doc! {
         "$set": {
-            CHAMP_SENSEURS: senseurs
+            CHAMP_SENSEURS: senseurs,
+            "derniere_lecture": &lecture.derniere_lecture,
+            "derniere_lecture_dt": derniere_lecture_dt,
         },
         "$setOnInsert": {
             CHAMP_CREATION: Utc::now(),
@@ -666,6 +725,25 @@ struct EvenementLecture {
     noeud_id: String,
     uuid_senseur: String,
     senseurs: HashMap<String, LectureSenseur>,
+    derniere_lecture: Option<DateEpochSeconds>,
+}
+
+impl EvenementLecture {
+    fn calculer_derniere_lecture(&mut self) {
+        let mut date_lecture: &chrono::DateTime<Utc> = &chrono::MIN_DATETIME;
+        for l in self.senseurs.values() {
+            date_lecture = &l.timestamp.get_datetime().max(date_lecture);
+        }
+
+        match date_lecture == &chrono::MIN_DATETIME {
+            true => {
+                self.derniere_lecture = None
+            },
+            false => {
+                self.derniere_lecture = Some(DateEpochSeconds::from(date_lecture.to_owned()));
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -761,4 +839,40 @@ mod test_integration {
         futures.next().await.expect("resultat").expect("ok");
     }
 
+    #[tokio::test]
+    async fn test_requete_liste_senseurs_par_uuid() {
+        setup("test_requete_liste_senseurs_par_uuid");
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let enveloppe_privee = middleware.get_enveloppe_privee();
+        let fingerprint = enveloppe_privee.fingerprint().as_str();
+
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: "43eee47d-fc23-4cf5-b359-70069cf06600".into()};
+        futures.push(tokio::spawn(async move {
+
+            let contenu = json!({"uuid_senseurs": vec!["7a2764fa-c457-4f25-af0d-0fc915439b21"]});
+            let message_mg = MessageMilleGrille::new_signer(
+                enveloppe_privee.as_ref(),
+                &contenu,
+                DOMAINE_NOM.into(),
+                REQUETE_LISTE_NOEUDS.into(),
+                None::<&str>,
+                None
+            ).expect("message");
+            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+
+            // Injecter certificat utilise pour signer
+            message.certificat = Some(enveloppe_privee.enveloppe.clone());
+
+            let mva = MessageValideAction::new(
+                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+
+            let reponse = requete_liste_senseurs_par_uuid(middleware.as_ref(), mva, &gestionnaire).await.expect("dechiffrage");
+            debug!("test_requete_liste_senseurs_par_uuid Reponse : {:?}", reponse);
+
+            assert_eq!(true, reponse.is_some());
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
 }
