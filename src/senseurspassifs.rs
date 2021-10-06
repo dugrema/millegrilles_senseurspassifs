@@ -14,16 +14,16 @@ use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMil
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::middleware::{Middleware, sauvegarder_transaction_recue};
-use millegrilles_common_rust::mongodb::options::{CountOptions, FindOptions, Hint, UpdateOptions};
+use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneOptions, FindOptions, Hint, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::MessageValideAction;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
-use millegrilles_common_rust::serde_json::json;
+use millegrilles_common_rust::serde_json::{json, Value};
 use millegrilles_common_rust::tokio::time::{Duration, sleep};
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::transactions::{TraiterTransaction, Transaction, TransactionImpl};
 use millegrilles_common_rust::verificateur::VerificateurMessage;
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson, convertir_bson_value, filtrer_doc_id};
 
 pub const DOMAINE_NOM: &str = "SenseursPassifs";
 // pub const NOM_COLLECTION_LECTURES: &str = "SenseursPassifs_{NOEUD_ID}/lectures";
@@ -34,7 +34,7 @@ pub const DOMAINE_NOM: &str = "SenseursPassifs";
 // const NOM_Q_TRIGGERS: &str = "SenseursPassifs/triggers";
 
 const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
-const REQUETE_AFFICHAGE_LCD_NOEUD: &str = "affichageLcdNoeud";
+const REQUETE_GET_NOEUD: &str = "getNoeud";
 const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
 const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
 
@@ -158,7 +158,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     // RK 2.prive, 3.protege et 4.secure
     let requetes_privees: Vec<&str> = vec![
         REQUETE_LISTE_NOEUDS,
-        REQUETE_AFFICHAGE_LCD_NOEUD,
+        REQUETE_GET_NOEUD,
         REQUETE_LISTE_SENSEURS_PAR_UUID,
         REQUETE_LISTE_SENSEURS_NOEUD,
     ];
@@ -322,6 +322,8 @@ async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gest
             match message.action.as_str() {
                 REQUETE_LISTE_NOEUDS => requete_liste_noeuds(middleware, message, gestionnaire).await,
                 REQUETE_LISTE_SENSEURS_PAR_UUID => requete_liste_senseurs_par_uuid(middleware, message, gestionnaire).await,
+                REQUETE_LISTE_SENSEURS_NOEUD => requete_liste_senseurs_pour_noeud(middleware, message, gestionnaire).await,
+                REQUETE_GET_NOEUD => requete_get_noeud(middleware, message, gestionnaire).await,
                 _ => {
                     error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                     Ok(None)
@@ -536,7 +538,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
         }
     }
 
-    Ok(None)
+    middleware.reponse_ok()
 }
 
 async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
@@ -570,7 +572,7 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
         debug!("transaction_maj_noeud Resultat ajout transaction : {:?}", resultat);
     }
 
-    Ok(None)
+    middleware.reponse_ok()
 }
 
 async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -601,7 +603,7 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
         noeuds
     };
 
-    let reponse = json!({ "noeuds": noeuds, "partition": &gestionnaire.noeud_id });
+    let reponse = json!({ "ok": true, "noeuds": noeuds, "partition": &gestionnaire.noeud_id });
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
@@ -636,13 +638,106 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
         senseurs
     };
 
-    let reponse = json!({ "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
+    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct RequeteSenseursParUuid {
     uuid_senseurs: Vec<String>,
+}
+
+async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_liste_senseurs_pour_noeud Consommer requete : {:?}", & m.message);
+    let requete: RequeteSenseursPourNoeud = m.message.get_msg().map_contenu(None)?;
+
+    let senseurs = {
+        let filtre = doc! { CHAMP_NOEUD_ID: &requete.noeud_id };
+        let projection = doc! {
+            CHAMP_UUID_SENSEUR: 1,
+            CHAMP_NOEUD_ID: 1,
+            "derniere_lecture": 1,
+            CHAMP_SENSEURS: 1,
+            "securite": 1,
+            "descriptif": 1,
+        };
+        let opts = FindOptions::builder().projection(projection).build();
+        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let mut curseur = collection.find(filtre, opts).await?;
+
+        let mut senseurs = Vec::new();
+        while let Some(d) = curseur.next().await {
+            debug!("Document senseur bson : {:?}", d);
+            let mut noeud: InformationSenseur = convertir_bson_deserializable(d?)?;
+            senseurs.push(noeud);
+        }
+
+        senseurs
+    };
+
+    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RequeteSenseursPourNoeud {
+    noeud_id: String,
+}
+
+async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_get_noeud Consommer requete : {:?}", & m.message);
+    let requete: RequeteGetNoeud = m.message.get_msg().map_contenu(None)?;
+
+    let noeud = {
+        let filtre = doc! { };
+        let projection = doc! {
+            CHAMP_NOEUD_ID: 1,
+            "securite": 1,
+            CHAMP_MODIFICATION: 1,
+            "descriptif": 1,
+            "lcd_actif": 1, "lcd_vpin_onoff": 1, "lcd_vpin_navigation": 1, "lcd_affichage": 1,
+        };
+        let filtre = doc! { CHAMP_NOEUD_ID: &requete.noeud_id };
+        let opts = FindOneOptions::builder().projection(projection).build();
+        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
+        let mut doc = collection.find_one(filtre, opts).await?;
+
+        match doc {
+            Some(mut n) => {
+                filtrer_doc_id(&mut n);
+                Some(convertir_bson_value(n)?)
+            },
+            None => None
+        }
+    };
+
+    let reponse = match noeud {
+        Some(mut val_noeud) => {
+            // Inserer valeurs manquantes pour la response
+            if let Some(mut o) = val_noeud.as_object_mut() {
+                o.insert("ok".into(), Value::Bool(true));
+                o.insert("partition".into(), Value::String(gestionnaire.noeud_id.clone()));
+            }
+            val_noeud
+        },
+        None => {
+            // Confirmer que la requete s'est bien executee mais rien trouve
+            json!({ "ok": true, "partition": &gestionnaire.noeud_id, CHAMP_NOEUD_ID: None::<&str>})
+        }
+    };
+
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RequeteGetNoeud {
+    noeud_id: String
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -802,6 +897,8 @@ mod test_integration {
 
     use super::*;
 
+    const DUMMY_NOEUD_ID: &str = "43eee47d-fc23-4cf5-b359-70069cf06600";
+
     #[tokio::test]
     async fn test_requete_liste_noeuds() {
         setup("test_requete_liste_noeuds");
@@ -809,7 +906,7 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: "43eee47d-fc23-4cf5-b359-70069cf06600".into()};
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
         futures.push(tokio::spawn(async move {
 
             let contenu = json!({});
@@ -846,7 +943,7 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: "43eee47d-fc23-4cf5-b359-70069cf06600".into()};
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
         futures.push(tokio::spawn(async move {
 
             let contenu = json!({"uuid_senseurs": vec!["7a2764fa-c457-4f25-af0d-0fc915439b21"]});
@@ -875,4 +972,81 @@ mod test_integration {
         // Execution async du test
         futures.next().await.expect("resultat").expect("ok");
     }
+
+    #[tokio::test]
+    async fn test_requete_liste_senseurs_pour_noeud() {
+        setup("test_requete_liste_senseurs_pour_noeud");
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let enveloppe_privee = middleware.get_enveloppe_privee();
+        let fingerprint = enveloppe_privee.fingerprint().as_str();
+
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        futures.push(tokio::spawn(async move {
+
+            let contenu = json!({"noeud_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
+            let message_mg = MessageMilleGrille::new_signer(
+                enveloppe_privee.as_ref(),
+                &contenu,
+                DOMAINE_NOM.into(),
+                REQUETE_LISTE_NOEUDS.into(),
+                None::<&str>,
+                None
+            ).expect("message");
+            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+
+            // Injecter certificat utilise pour signer
+            message.certificat = Some(enveloppe_privee.enveloppe.clone());
+
+            let mva = MessageValideAction::new(
+                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+
+            let reponse = requete_liste_senseurs_pour_noeud(middleware.as_ref(), mva, &gestionnaire)
+                .await.expect("requete");
+            debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
+
+            assert_eq!(true, reponse.is_some());
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+
+    #[tokio::test]
+    async fn test_requete_get_noeud() {
+        setup("test_requete_get_noeud");
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let enveloppe_privee = middleware.get_enveloppe_privee();
+        let fingerprint = enveloppe_privee.fingerprint().as_str();
+
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        futures.push(tokio::spawn(async move {
+
+            let contenu = json!({"noeud_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
+            let message_mg = MessageMilleGrille::new_signer(
+                enveloppe_privee.as_ref(),
+                &contenu,
+                DOMAINE_NOM.into(),
+                REQUETE_LISTE_NOEUDS.into(),
+                None::<&str>,
+                None
+            ).expect("message");
+            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+
+            // Injecter certificat utilise pour signer
+            message.certificat = Some(enveloppe_privee.enveloppe.clone());
+
+            let mva = MessageValideAction::new(
+                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+
+            let reponse = requete_get_noeud(middleware.as_ref(), mva, &gestionnaire)
+                .await.expect("requete");
+            debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
+
+            assert_eq!(true, reponse.is_some());
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+
 }

@@ -272,7 +272,7 @@ async fn consommer(
     mut rx: Receiver<TypeMessage>,
     map_senders: HashMap<String, Sender<TypeMessage>>
 ) {
-    info!("domaines_senseurspassifs.consommer : Debut thread, mapping : {:?}", map_senders.keys());
+    debug!("domaines_senseurspassifs.consommer : Debut thread, mapping : {:?}", map_senders.keys());
 
     while let Some(message) = rx.recv().await {
         match &message {
