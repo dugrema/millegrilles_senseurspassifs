@@ -215,11 +215,11 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     });
     rk_transactions.push(ConfigRoutingExchange {
         routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_SUPPRESSION_SENSEUR).into(),
-        exchange: Securite::L3Protege
+        exchange: Securite::L4Secure
     });
     rk_transactions.push(ConfigRoutingExchange {
         routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_SUPPRESSION_SENSEUR).into(),
-        exchange: Securite::L4Secure
+        exchange: Securite::L3Protege
     });
 
     // Queue de transactions
@@ -469,6 +469,7 @@ async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestionnai
 {
     match transaction.get_action() {
         TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
+        TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), transaction.get_action())),
     }
 }
@@ -482,28 +483,91 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
     debug!("transaction_maj_senseur Consommer transaction : {:?}", &transaction);
     let transaction_cle = match transaction.clone().convertir::<TransactionMajSenseur>() {
         Ok(t) => t,
-        Err(e) => Err(format!("maitredescles_ca.transaction_cle Erreur conversion transaction : {:?}", e))?
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur conversion transaction : {:?}", e))?
     };
     debug!("transaction_maj_senseur Transaction lue {:?}", transaction_cle);
 
-    let ops = doc! {
-        "$set": {
-            CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud,
-        },
-        "$setOnInsert": {
-            CHAMP_CREATION: Utc::now(),
-            CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur,
-        },
-        "$currentDate": {CHAMP_MODIFICATION: true}
+    {
+        let ops = doc! {
+            "$set": {
+                CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud,
+            },
+            "$setOnInsert": {
+                CHAMP_CREATION: Utc::now(),
+                CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur,
+            },
+            "$currentDate": {CHAMP_MODIFICATION: true}
+        };
+        let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur };
+        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let opts = UpdateOptions::builder().upsert(true).build();
+        let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
+            Ok(r) => r,
+            Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement transaction senseur : {:?}", e))?
+        };
+        debug!("transaction_maj_senseur Resultat ajout transaction : {:?}", resultat);
+    }
+
+    // Maj noeud
+    {
+        let filtre = doc! { CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud };
+        let ops = doc! {
+            "$setOnInsert": {
+                CHAMP_CREATION: Utc::now(),
+                CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud,
+            },
+            "$currentDate": {CHAMP_MODIFICATION: true}
+        };
+        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
+        let opts = UpdateOptions::builder().upsert(true).build();
+        let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
+            Ok(r) => r,
+            Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement maj noeud : {:?}", e))?
+        };
+        if let Some(_) = resultat.upserted_id {
+            debug!("transaction_maj_senseur Creer transaction pour noeud_id {}", transaction_cle.uuid_noeud);
+            let transaction = TransactionMajNoeud::new(&transaction_cle.uuid_noeud);
+            let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
+                .exchanges(vec![Securite::L4Secure])
+                .partition(&gestionnaire.noeud_id)
+                .build();
+            middleware.soumettre_transaction(routage, &transaction, false).await?;
+        }
+    }
+
+    Ok(None)
+}
+
+async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_maj_noeud Consommer transaction : {:?}", &transaction);
+    let contenu_transaction = match transaction.clone().convertir::<TransactionMajNoeud>() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion transaction : {:?}", e))?
     };
-    let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur };
-    let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
-    let opts = UpdateOptions::builder().upsert(true).build();
-    let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
-        Ok(r) => r,
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement transaction senseur : {:?}", e))?
-    };
-    debug!("transaction_maj_senseur Resultat ajout transaction : {:?}", resultat);
+    debug!("transaction_maj_noeud Transaction lue {:?}", contenu_transaction);
+
+    {
+        let ops = doc! {
+            "$setOnInsert": {
+                CHAMP_CREATION: Utc::now(),
+                CHAMP_NOEUD_ID: &contenu_transaction.uuid_noeud,
+            },
+            "$currentDate": {CHAMP_MODIFICATION: true}
+        };
+        let filtre = doc! { CHAMP_NOEUD_ID: &contenu_transaction.uuid_noeud };
+        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
+        let opts = UpdateOptions::builder().upsert(true).build();
+        let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
+            Ok(r) => r,
+            Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur traitement transaction senseur : {:?}", e))?
+        };
+        debug!("transaction_maj_noeud Resultat ajout transaction : {:?}", resultat);
+    }
 
     Ok(None)
 }
@@ -612,6 +676,21 @@ impl TransactionMajSenseur {
     {
         TransactionMajSenseur {
             uuid_senseur: uuid_senseur.into(),
+            uuid_noeud: uuid_noeud.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TransactionMajNoeud {
+    uuid_noeud: String,
+}
+
+impl TransactionMajNoeud {
+    pub fn new<S>(uuid_noeud: S)  -> Self
+        where S: Into<String>
+    {
+        TransactionMajNoeud {
             uuid_noeud: uuid_noeud.into(),
         }
     }
