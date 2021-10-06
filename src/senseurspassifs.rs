@@ -170,6 +170,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
     // Requete liste noeuds permet de trouver les noeuds sur toutes les partitions (potentiellement plusieurs reponses)
     for sec in &securite_prive_prot {
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_NOEUD), exchange: sec.to_owned()});
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_NOEUDS), exchange: sec.to_owned()});
     }
 
