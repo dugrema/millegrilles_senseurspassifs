@@ -152,26 +152,31 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
 pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueType> {
     let mut rk_volatils = Vec::new();
 
-    let noeud_id_hache = gestionnaire.get_noeud_id_tronque();
+    let noeud_id = gestionnaire.noeud_id.as_str();
+    let securite_prive_prot_sec = vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure];
+    let securite_prive_prot = vec![Securite::L2Prive, Securite::L3Protege];
 
-    // // RK 3.protege et 4.secure
-    // let requetes_protegees: Vec<&str> = vec![
-    //     REQUETE_CLES_NON_DECHIFFRABLES,
-    //     REQUETE_COMPTER_CLES_NON_DECHIFFRABLES,
-    //     REQUETE_SYNCHRONISER_CLES,
-    // ];
-    // for req in requetes_protegees {
-    //     rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, req), exchange: Securite::L3Protege});
-    //     rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, req), exchange: Securite::L4Secure});
-    // }
+    // RK 2.prive, 3.protege et 4.secure
+    let requetes_privees: Vec<&str> = vec![
+        REQUETE_LISTE_NOEUDS,
+        REQUETE_AFFICHAGE_LCD_NOEUD,
+        REQUETE_LISTE_SENSEURS_PAR_UUID,
+        REQUETE_LISTE_SENSEURS_NOEUD,
+    ];
+    for req in requetes_privees {
+        for sec in &securite_prive_prot {
+            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}.{}", DOMAINE_NOM, noeud_id, req), exchange: sec.to_owned()});
+        }
+    }
 
-    let evenements_proteges: Vec<&str> = vec![
+    let evenements: Vec<&str> = vec![
         EVENEMENT_LECTURE,
     ];
-    for evnt in evenements_proteges {
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive});
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L3Protege});
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L4Secure});
+    for evnt in evenements {
+        for sec in &securite_prive_prot {
+            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: sec.to_owned() });
+            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, noeud_id, evnt), exchange: sec.to_owned() });
+        }
     }
 
     // let commandes_protegees: Vec<&str> = vec![COMMANDE_CONFIRMER_CLES_SUR_CA];
@@ -193,18 +198,13 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ));
 
     let mut rk_transactions = Vec::new();
-    rk_transactions.push(ConfigRoutingExchange {
-        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
-        exchange: Securite::L4Secure
-    });
-    rk_transactions.push(ConfigRoutingExchange {
-        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
-        exchange: Securite::L3Protege
-    });
-    rk_transactions.push(ConfigRoutingExchange {
-        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
-        exchange: Securite::L2Prive
-    });
+    for sec in securite_prive_prot_sec {
+        rk_transactions.push(ConfigRoutingExchange {
+            routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
+            exchange: sec.to_owned()
+       });
+    }
+
     rk_transactions.push(ConfigRoutingExchange {
         routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_MAJ_SENSEUR).into(),
         exchange: Securite::L4Secure
@@ -216,10 +216,6 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     rk_transactions.push(ConfigRoutingExchange {
         routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_SUPPRESSION_SENSEUR).into(),
         exchange: Securite::L4Secure
-    });
-    rk_transactions.push(ConfigRoutingExchange {
-        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_SUPPRESSION_SENSEUR).into(),
-        exchange: Securite::L3Protege
     });
 
     // Queue de transactions
