@@ -25,7 +25,7 @@ use millegrilles_common_rust::transactions::{TraiterTransaction, Transaction, Tr
 use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson};
 
-const DOMAINE_NOM: &str = "SenseursPassifs";
+pub const DOMAINE_NOM: &str = "SenseursPassifs";
 // pub const NOM_COLLECTION_LECTURES: &str = "SenseursPassifs_{NOEUD_ID}/lectures";
 // pub const NOM_COLLECTION_TRANSACTIONS: &str = "SenseursPassifs_{NOEUD_ID}";
 
@@ -34,7 +34,6 @@ const DOMAINE_NOM: &str = "SenseursPassifs";
 // const NOM_Q_TRIGGERS: &str = "SenseursPassifs/triggers";
 
 const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
-const REQUETE_VITRINE_DASHBOARD: &str = "dashboard";
 const REQUETE_AFFICHAGE_LCD_NOEUD: &str = "affichageLcdNoeud";
 const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
 const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
@@ -167,6 +166,11 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         for sec in &securite_prive_prot {
             rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}.{}", DOMAINE_NOM, noeud_id, req), exchange: sec.to_owned()});
         }
+    }
+
+    // Requete liste noeuds permet de trouver les noeuds sur toutes les partitions (potentiellement plusieurs reponses)
+    for sec in &securite_prive_prot {
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_NOEUDS), exchange: sec.to_owned()});
     }
 
     let evenements: Vec<&str> = vec![
@@ -316,7 +320,7 @@ async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gest
     match message.domaine.as_str() {
         DOMAINE_NOM => {
             match message.action.as_str() {
-                // REQUETE_COMPTER_CLES_NON_DECHIFFRABLES => requete_compter_cles_non_dechiffrables(middleware, message, gestionnaire).await,
+                REQUETE_LISTE_NOEUDS => requete_liste_noeuds(middleware, message, gestionnaire).await,
                 _ => {
                     error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                     Ok(None)
@@ -486,7 +490,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
     {
         let ops = doc! {
             "$set": {
-                CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud,
+                CHAMP_NOEUD_ID: &transaction_cle.noeud_id,
             },
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
@@ -506,11 +510,11 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
 
     // Maj noeud
     {
-        let filtre = doc! { CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud };
+        let filtre = doc! { CHAMP_NOEUD_ID: &transaction_cle.noeud_id };
         let ops = doc! {
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
-                CHAMP_NOEUD_ID: &transaction_cle.uuid_noeud,
+                CHAMP_NOEUD_ID: &transaction_cle.noeud_id,
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
@@ -521,8 +525,8 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement maj noeud : {:?}", e))?
         };
         if let Some(_) = resultat.upserted_id {
-            debug!("transaction_maj_senseur Creer transaction pour noeud_id {}", transaction_cle.uuid_noeud);
-            let transaction = TransactionMajNoeud::new(&transaction_cle.uuid_noeud);
+            debug!("transaction_maj_senseur Creer transaction pour noeud_id {}", transaction_cle.noeud_id);
+            let transaction = TransactionMajNoeud::new(&transaction_cle.noeud_id);
             let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
                 .exchanges(vec![Securite::L4Secure])
                 .partition(&gestionnaire.noeud_id)
@@ -551,11 +555,11 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
         let ops = doc! {
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
-                CHAMP_NOEUD_ID: &contenu_transaction.uuid_noeud,
+                CHAMP_NOEUD_ID: &contenu_transaction.noeud_id,
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
-        let filtre = doc! { CHAMP_NOEUD_ID: &contenu_transaction.uuid_noeud };
+        let filtre = doc! { CHAMP_NOEUD_ID: &contenu_transaction.noeud_id };
         let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
         let opts = UpdateOptions::builder().upsert(true).build();
         let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
@@ -568,27 +572,39 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
     Ok(None)
 }
 
-// async fn requete_compter_cles_non_dechiffrables<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-//     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-//     where M: GenerateurMessages + MongoDao + VerificateurMessage,
-// {
-//     debug!("requete_compter_cles_non_dechiffrables Consommer commande : {:?}", & m.message);
-//     // let requete: RequeteDechiffrage = m.message.get_msg().map_contenu(None)?;
-//     // debug!("requete_compter_cles_non_dechiffrables cle parsed : {:?}", requete);
-//
-//     let filtre = doc! { CHAMP_NON_DECHIFFRABLE: true };
-//     let hint = Hint::Name(INDEX_NON_DECHIFFRABLES.into());
-//     // let sort_doc = doc! {
-//     //     CHAMP_NON_DECHIFFRABLE: 1,
-//     //     CHAMP_CREATION: 1,
-//     // };
-//     let opts = CountOptions::builder().hint(hint).build();
-//     let collection = middleware.get_collection(NOM_COLLECTION_CLES)?;
-//     let compte = collection.count_documents(filtre, opts).await?;
-//
-//     let reponse = json!({ "compte": compte });
-//     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
-// }
+async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_liste_noeuds Consommer requete : {:?}", & m.message);
+    // let requete: RequeteDechiffrage = m.message.get_msg().map_contenu(None)?;
+    // debug!("requete_compter_cles_non_dechiffrables cle parsed : {:?}", requete);
+
+    let noeuds = {
+        let filtre = doc! { };
+        let projection = doc! {
+            CHAMP_NOEUD_ID: 1,
+            "securite": 1,
+            CHAMP_MODIFICATION: 1,
+            "descriptif": 1,
+            "lcd_actif": 1, "lcd_vpin_onoff": 1, "lcd_vpin_navigation": 1, "lcd_affichage": 1,
+        };
+        let opts = FindOptions::builder().projection(projection).build();
+        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
+        let mut curseur = collection.find(filtre, opts).await?;
+
+        let mut noeuds = Vec::new();
+        while let Some(d) = curseur.next().await {
+            let noeud: TransactionMajNoeud = convertir_bson_deserializable(d?)?;
+            noeuds.push(noeud);
+        }
+
+        noeuds
+    };
+
+    let reponse = json!({ "noeuds": noeuds, "partition": &gestionnaire.noeud_id });
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
 // struct RequeteClesNonDechiffrable {
@@ -663,7 +679,7 @@ struct LectureSenseur {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct TransactionMajSenseur {
     uuid_senseur: String,
-    uuid_noeud: String,
+    noeud_id: String,
 }
 
 impl TransactionMajSenseur {
@@ -672,14 +688,14 @@ impl TransactionMajSenseur {
     {
         TransactionMajSenseur {
             uuid_senseur: uuid_senseur.into(),
-            uuid_noeud: uuid_noeud.into(),
+            noeud_id: uuid_noeud.into(),
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct TransactionMajNoeud {
-    uuid_noeud: String,
+    noeud_id: String,
 }
 
 impl TransactionMajNoeud {
@@ -687,7 +703,7 @@ impl TransactionMajNoeud {
         where S: Into<String>
     {
         TransactionMajNoeud {
-            uuid_noeud: uuid_noeud.into(),
+            noeud_id: uuid_noeud.into(),
         }
     }
 }
@@ -708,39 +724,41 @@ mod test_integration {
 
     use super::*;
 
-    // #[tokio::test]
-    // async fn test_requete_compte_non_dechiffrable() {
-    //     setup("test_requete_compte_non_dechiffrable");
-    //     let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-    //     let enveloppe_privee = middleware.get_enveloppe_privee();
-    //     let fingerprint = enveloppe_privee.fingerprint().as_str();
-    //
-    //     let gestionnaire = GestionnaireSenseursPassifs {fingerprint: fingerprint.into()};
-    //     futures.push(tokio::spawn(async move {
-    //
-    //         let contenu = json!({});
-    //         let message_mg = MessageMilleGrille::new_signer(
-    //             enveloppe_privee.as_ref(),
-    //             &contenu,
-    //             DOMAINE_NOM.into(),
-    //             REQUETE_COMPTER_CLES_NON_DECHIFFRABLES.into(),
-    //             None::<&str>,
-    //             None
-    //         ).expect("message");
-    //         let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
-    //
-    //         // Injecter certificat utilise pour signer
-    //         message.certificat = Some(enveloppe_privee.enveloppe.clone());
-    //
-    //         let mva = MessageValideAction::new(
-    //             message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
-    //
-    //         let reponse = requete_compter_cles_non_dechiffrables(middleware.as_ref(), mva, &gestionnaire).await.expect("dechiffrage");
-    //         debug!("Reponse requete compte cles non dechiffrables : {:?}", reponse);
-    //
-    //     }));
-    //     // Execution async du test
-    //     futures.next().await.expect("resultat").expect("ok");
-    // }
+    #[tokio::test]
+    async fn test_requete_liste_noeuds() {
+        setup("test_requete_liste_noeuds");
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let enveloppe_privee = middleware.get_enveloppe_privee();
+        let fingerprint = enveloppe_privee.fingerprint().as_str();
+
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: "43eee47d-fc23-4cf5-b359-70069cf06600".into()};
+        futures.push(tokio::spawn(async move {
+
+            let contenu = json!({});
+            let message_mg = MessageMilleGrille::new_signer(
+                enveloppe_privee.as_ref(),
+                &contenu,
+                DOMAINE_NOM.into(),
+                REQUETE_LISTE_NOEUDS.into(),
+                None::<&str>,
+                None
+            ).expect("message");
+            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+
+            // Injecter certificat utilise pour signer
+            message.certificat = Some(enveloppe_privee.enveloppe.clone());
+
+            let mva = MessageValideAction::new(
+                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+
+            let reponse = requete_liste_noeuds(middleware.as_ref(), mva, &gestionnaire).await.expect("dechiffrage");
+            debug!("test_requete_liste_noeuds Reponse : {:?}", reponse);
+
+            assert_eq!(true, reponse.is_some());
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
 
 }
