@@ -591,7 +591,7 @@ async fn transaction_suppression_senseur<M, T>(middleware: &M, transaction: T, g
     debug!("transaction_suppression_senseur Consommer transaction : {:?}", &transaction);
     let contenu_transaction = match transaction.clone().convertir::<TransactionSupprimerSenseur>() {
         Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion transaction : {:?}", e))?
+        Err(e) => Err(format!("senseurspassifs.transaction_suppression_senseur Erreur conversion transaction : {:?}", e))?
     };
     debug!("transaction_suppression_senseur Transaction lue {:?}", contenu_transaction);
 
@@ -608,9 +608,137 @@ async fn transaction_suppression_senseur<M, T>(middleware: &M, transaction: T, g
     middleware.reponse_ok()
 }
 
+async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_lectures Consommer transaction : {:?}", &transaction);
+    let contenu_transaction = match transaction.clone().convertir::<TransactionLectures>() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_lectures Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_lectures Transaction lue {:?}", contenu_transaction);
+
+    // Trouver la plus recente lecture
+    match contenu_transaction.plus_recente_lecture() {
+        Some(plus_recente_lecture) => {
+
+            let senseur = doc! {
+                "valeur": &plus_recente_lecture.valeur,
+                "timestamp": &plus_recente_lecture.timestamp,
+                "type": &contenu_transaction.type_,
+            };
+
+            let filtre = doc! {
+                CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur,
+                "derniere_lecture": &plus_recente_lecture.timestamp,
+            };
+            let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
+            let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+            let ops = doc! {
+                "$set": {
+                    format!("{}.{}", CHAMP_SENSEURS, &contenu_transaction.senseur): senseur,
+                    "derniere_lecture": &plus_recente_lecture.timestamp,
+                    "derniere_lecture_dt": &plus_recente_lecture.timestamp.get_datetime(),
+                },
+                "$setOnInsert": {
+                    CHAMP_CREATION: Utc::now(),
+                    CHAMP_NOEUD_ID: &contenu_transaction.noeud_id,
+                    CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur,
+                },
+                "$currentDate": { CHAMP_MODIFICATION: true },
+            };
+            let opts = UpdateOptions::builder().upsert(true).build();
+            let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
+                Ok(r) => r,
+                Err(e) => Err(format!("senseurspassifs.transaction_lectures Erreur traitement transaction senseur : {:?}", e))?
+            };
+            debug!("transaction_lectures Resultat : {:?}", resultat);
+
+            if let Some(_) = resultat.upserted_id {
+                debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
+                let transaction = TransactionMajSenseur::new(
+                    &contenu_transaction.uuid_senseur, &contenu_transaction.noeud_id);
+                let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
+                    .exchanges(vec![Securite::L4Secure])
+                    .partition(&gestionnaire.noeud_id)
+                    .build();
+                middleware.soumettre_transaction(routage, &transaction, false).await?;
+            }
+        },
+        None => {
+            warn!("Transaction lectures senseur {} recue sans contenu (aucunes lectures)", contenu_transaction.uuid_senseur);
+        }
+    }
+
+    middleware.reponse_ok()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct TransactionSupprimerSenseur {
     uuid_senseur: String
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TransactionLectures {
+    /// Identificateur unique de l'appareil
+    uuid_senseur: String,
+
+    /// Identificateur interne du senseur sur l'appareil
+    senseur: String,
+
+    /// UUID du noeud MilleGrille
+    noeud_id: String,
+
+    /// Type de lecture, e.g. temperature, humidite, pression, voltage, batterie, etc.
+    #[serde(rename="type")]
+    type_: String,
+
+    /// Heure de base des lectures dans la transaction en epoch secs
+    timestamp: DateEpochSeconds,
+
+    /// Moyenne des lectures
+    avg: f64,
+
+    /// Valeur max des lectures
+    max: f64,
+
+    /// Valeur min des lectures
+    min: f64,
+
+    /// Plus vieille date de lecture
+    timestamp_min: DateEpochSeconds,
+
+    /// Plus recente date de lecture
+    timestamp_max: DateEpochSeconds,
+
+    /// Liste des lectures
+    lectures: Vec<LectureTransaction>
+}
+
+impl TransactionLectures {
+    fn plus_recente_lecture(&self) -> Option<LectureTransaction> {
+        let mut date_lecture: &chrono::DateTime<Utc> = &chrono::MIN_DATETIME;
+        let mut lecture = None;
+        for l in &self.lectures {
+            if date_lecture < l.timestamp.get_datetime() {
+                lecture = Some(l);
+                date_lecture = l.timestamp.get_datetime();
+            }
+        }
+        match lecture {
+            Some(l) => Some(l.to_owned()),
+            None => None
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LectureTransaction {
+    timestamp: DateEpochSeconds,
+    valeur: f64,
 }
 
 async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -788,7 +916,7 @@ struct InformationSenseur {
     descriptif: Option<String>,
 }
 
-async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnare: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
+async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
@@ -824,7 +952,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         },
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
-    let collection = middleware.get_collection(gestionnare.get_collection_senseurs().as_str())?;
+    let collection = middleware.get_collection(gestionnaire.get_collection_senseurs().as_str())?;
     let opts = UpdateOptions::builder().upsert(true).build();
     let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
@@ -835,7 +963,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.noeud_id);
         let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
             .exchanges(vec![Securite::L4Secure])
-            .partition(&gestionnare.noeud_id)
+            .partition(&gestionnaire.noeud_id)
             .build();
         middleware.soumettre_transaction(routage, &transaction, false).await?;
     }
@@ -1112,14 +1240,67 @@ mod test_integration {
             // Injecter certificat utilise pour signer
             message.certificat = Some(enveloppe_privee.enveloppe.clone());
 
-            // let mva = MessageValideAction::new(
-            //     message.clone(), "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
-
             let transaction = TransactionImpl::try_from(message).expect("treansaction");
 
             let reponse = transaction_suppression_senseur(middleware.as_ref(), transaction, &gestionnaire)
                 .await.expect("requete");
-            debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
+            debug!("test_transaction_suppression_senseur Reponse : {:?}", reponse);
+
+            assert_eq!(true, reponse.is_some());
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+
+        #[tokio::test]
+    async fn test_transaction_lectures() {
+        setup("test_transaction_lectures");
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let enveloppe_privee = middleware.get_enveloppe_privee();
+        let fingerprint = enveloppe_privee.fingerprint().as_str();
+
+        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        futures.push(tokio::spawn(async move {
+
+            // Attendre connexion MQ
+            tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+
+            let contenu = json!({
+                "uuid_senseur": "7d32d355-d3fa-44fd-8a4d-323580fe55e2:dht",
+                "noeud_id": "7d32d355-d3fa-44fd-8a4d-323580fe55e2",
+                "senseur": "dht/18/temperature",
+                "avg": 22.7,
+                "max": 22.8,
+                "min": 22.6,
+                "timestamp": 1631156400,
+                "timestamp_max": 1631159993,
+                "timestamp_min": 1631156413,
+                "type": "temperature",
+                "lectures": [
+                    {"timestamp": 1631156413, "valeur": 22.8},
+                    {"timestamp": 1631156428, "valeur": 22.6},
+                    {"timestamp": 1631156444, "valeur": 22.7}
+                ]
+            });
+            let message_mg = MessageMilleGrille::new_signer(
+                enveloppe_privee.as_ref(),
+                &contenu,
+                DOMAINE_NOM.into(),
+                REQUETE_LISTE_NOEUDS.into(),
+                None::<&str>,
+                None
+            ).expect("message");
+            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+
+            // Injecter certificat utilise pour signer
+            message.certificat = Some(enveloppe_privee.enveloppe.clone());
+
+            let transaction = TransactionImpl::try_from(message).expect("transaction");
+
+            let reponse = transaction_lectures(middleware.as_ref(), transaction, &gestionnaire)
+                .await.expect("requete");
+            debug!("test_transaction_lectures Reponse : {:?}", reponse);
 
             assert_eq!(true, reponse.is_some());
 
