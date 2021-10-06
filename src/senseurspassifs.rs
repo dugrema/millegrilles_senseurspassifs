@@ -13,6 +13,7 @@ use millegrilles_common_rust::domaines::GestionnaireDomaine;
 use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::hachages::hacher_uuid;
+use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{Middleware, sauvegarder_transaction_recue};
 use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneOptions, FindOptions, Hint, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
@@ -139,7 +140,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         entretien(middleware).await
     }
 
-    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: MessageValideAction) -> Result<(), Box<dyn Error>> where M: Middleware + 'static {
+    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule) -> Result<(), Box<dyn Error>> where M: Middleware + 'static {
         traiter_cedule(middleware, trigger).await
     }
 
@@ -298,7 +299,7 @@ pub async fn entretien<M>(_middleware: Arc<M>)
     }
 }
 
-pub async fn traiter_cedule<M>(_middleware: &M, _trigger: MessageValideAction) -> Result<(), Box<dyn Error>>
+pub async fn traiter_cedule<M>(_middleware: &M, _trigger: &MessageCedule) -> Result<(), Box<dyn Error>>
 where M: Middleware + 'static {
     // let message = trigger.message;
 
@@ -480,6 +481,7 @@ async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestionnai
         TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
         TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
+        TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), transaction.get_action())),
     }
 }
@@ -897,6 +899,8 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
             json!({ "ok": true, "partition": &gestionnaire.noeud_id, CHAMP_NOEUD_ID: None::<&str>})
         }
     };
+
+    debug!("requete_get_noeud Reponse : {:?}", reponse);
 
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
