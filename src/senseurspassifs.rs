@@ -900,7 +900,7 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
             "securite": 1,
             CHAMP_MODIFICATION: 1,
             "descriptif": 1,
-            "lcd_actif": 1, "lcd_vpin_onoff": 1, "lcd_vpin_navigation": 1, "lcd_affichage": 1,
+            "lcd_actif": 1, "lcd_affichage": 1,
         };
         let filtre = doc! { CHAMP_NOEUD_ID: &requete.noeud_id };
         let opts = FindOneOptions::builder().projection(projection).build();
@@ -1075,6 +1075,17 @@ struct TransactionMajNoeud {
     descriptif: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     securite: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lcd_actif: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lcd_affichage: Option<Vec<LigneAffichageLcd>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LigneAffichageLcd {
+    uuid: String,
+    appareil: String,
+    affichage: String,
 }
 
 impl TransactionMajNoeud {
@@ -1085,6 +1096,8 @@ impl TransactionMajNoeud {
             noeud_id: uuid_noeud.into(),
             descriptif: None,
             securite: None,
+            lcd_actif: None,
+            lcd_affichage: None,
         }
     }
 }
