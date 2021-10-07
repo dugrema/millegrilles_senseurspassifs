@@ -548,7 +548,11 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
         let opts = UpdateOptions::builder().upsert(true).build();
-        let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
+        let collection_noeud = match middleware.get_collection(gestionnaire.get_collection_noeuds().as_str()) {
+            Ok(n) => n,
+            Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur ouverture collection noeuds: {:?}", e))?
+        };
+        let resultat = match collection_noeud.update_one(filtre, ops, Some(opts)).await {
             Ok(r) => r,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement maj noeud : {:?}", e))?
         };
