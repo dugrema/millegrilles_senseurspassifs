@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageM
 use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{Middleware, sauvegarder_transaction_recue};
-use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneOptions, FindOptions, Hint, UpdateOptions};
+use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneAndUpdateOptions, FindOneOptions, FindOptions, Hint, ReturnDocument, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::MessageValideAction;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
@@ -154,6 +154,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
     let noeud_id = gestionnaire.noeud_id.as_str();
     let securite_prive_prot_sec = vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure];
+    let securite_prot_sec = vec![Securite::L3Protege, Securite::L4Secure];
     let securite_prive_prot = vec![Securite::L2Prive, Securite::L3Protege];
 
     // RK 2.prive, 3.protege et 4.secure
@@ -211,18 +212,15 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
        });
     }
 
-    rk_transactions.push(ConfigRoutingExchange {
-        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_MAJ_SENSEUR).into(),
-        exchange: Securite::L4Secure
-    });
-    rk_transactions.push(ConfigRoutingExchange {
-        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_MAJ_NOEUD).into(),
-        exchange: Securite::L4Secure
-    });
-    rk_transactions.push(ConfigRoutingExchange {
-        routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_SUPPRESSION_SENSEUR).into(),
-        exchange: Securite::L4Secure
-    });
+    let transactions_prot_sec = vec![TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
+    for trans in &transactions_prot_sec {
+        for sec in &securite_prot_sec {
+            rk_transactions.push(ConfigRoutingExchange {
+                routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), trans).into(),
+                exchange: sec.to_owned()
+            });
+        }
+    }
 
     // Queue de transactions
     queues.push(QueueType::ExchangeQueue (
@@ -316,7 +314,12 @@ async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gest
     // Autorisation : On accepte les requetes de 3.protege ou 4.secure
     match message.verifier_exchanges(vec![Securite::L3Protege, Securite::L4Secure]) {
         true => Ok(()),
-        false => Err(format!("senseurspassifs.consommer_requete Trigger cedule autorisation invalide (pas d'un exchange reconnu)")),
+        false => {
+            match message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
+                true => Ok(()),
+                false => Err(format!("senseurspassifs.consommer_requete Autorisation invalide (pas d'un exchange reconnu) : {}", message.routing_key))
+            }
+        },
     }?;
 
     match message.domaine.as_str() {
@@ -563,25 +566,49 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
     };
     debug!("transaction_maj_noeud Transaction lue {:?}", contenu_transaction);
 
-    {
-        let ops = doc! {
+    let document_transaction = {
+        let mut valeurs = match convertir_to_bson(contenu_transaction.clone()) {
+            Ok(v) => v,
+            Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion transaction a bson : {:?}", e))?
+        };
+        valeurs.remove("noeud_id"); // Enlever cle
+
+        let mut ops = doc! {
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
                 CHAMP_NOEUD_ID: &contenu_transaction.noeud_id,
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
+
+        if valeurs.len() > 0 {
+            ops.insert("$set", valeurs);
+        }
+
         let filtre = doc! { CHAMP_NOEUD_ID: &contenu_transaction.noeud_id };
         let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
-        let opts = UpdateOptions::builder().upsert(true).build();
-        let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
-            Ok(r) => r,
+        let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
+        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+            Ok(r) => {
+                match r {
+                    Some(r) => {
+                        match convertir_bson_deserializable::<TransactionMajNoeud>(r) {
+                            Ok(r) => r,
+                            Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion a TransactionMajNoeud : {:?}", e))?
+                        }
+                    },
+                    None => Err(format!("senseurspassifs.transaction_maj_noeud Erreur recuperation document transaction maj"))?
+                }
+            },
             Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur traitement transaction senseur : {:?}", e))?
-        };
-        debug!("transaction_maj_noeud Resultat ajout transaction : {:?}", resultat);
-    }
+        }
+    };
 
-    middleware.reponse_ok()
+    debug!("transaction_maj_noeud Resultat ajout transaction : {:?}", document_transaction);
+    match middleware.formatter_reponse(&document_transaction, None) {
+        Ok(reponse) => Ok(Some(reponse)),
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur preparation reponse : {:?}", e))
+    }
 }
 
 async fn transaction_suppression_senseur<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
@@ -807,7 +834,9 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
     };
 
     let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
+    debug!("Reponse formattee : {:?}", reponse_formattee);
+    Ok(Some(reponse_formattee))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -847,7 +876,9 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
     };
 
     let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
+    debug!("Reponse formattee : {:?}", reponse_formattee);
+    Ok(Some(reponse_formattee))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -912,12 +943,13 @@ struct RequeteGetNoeud {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct InformationSenseur {
-    uuid_senseur: String,
-    noeud_id: String,
     derniere_lecture: Option<DateEpochSeconds>,
-    senseurs: Option<HashMap<String, LectureSenseur>>,
-    securite: Option<String>,
     descriptif: Option<String>,
+    noeud_id: String,
+    securite: Option<String>,
+
+    senseurs: Option<BTreeMap<String, LectureSenseur>>,
+    uuid_senseur: String,
 }
 
 async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
@@ -1039,6 +1071,10 @@ impl TransactionMajSenseur {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct TransactionMajNoeud {
     noeud_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    descriptif: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    securite: Option<String>,
 }
 
 impl TransactionMajNoeud {
@@ -1047,6 +1083,8 @@ impl TransactionMajNoeud {
     {
         TransactionMajNoeud {
             noeud_id: uuid_noeud.into(),
+            descriptif: None,
+            securite: None,
         }
     }
 }
