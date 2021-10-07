@@ -501,12 +501,21 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
         Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur conversion transaction : {:?}", e))?
     };
     debug!("transaction_maj_senseur Transaction lue {:?}", transaction_cle);
+    let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
 
-    {
+    let document_transaction = {
+        let mut set_ops = doc! {CHAMP_NOEUD_ID: &transaction_cle.noeud_id};
+
+        let mut valeur_transactions = match convertir_to_bson(transaction_cle.clone()) {
+            Ok(v) => v,
+            Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur conversion transaction en bson : {:?}", e))?
+        };
+        filtrer_doc_id(&mut valeur_transactions);
+        valeur_transactions.remove("uuid_senseur");
+        set_ops.extend(valeur_transactions);
+
         let ops = doc! {
-            "$set": {
-                CHAMP_NOEUD_ID: &transaction_cle.noeud_id,
-            },
+            "$set": set_ops,
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
                 CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur,
@@ -514,14 +523,19 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
         let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur };
-        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
-        let opts = UpdateOptions::builder().upsert(true).build();
-        let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
-            Ok(r) => r,
+        let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
+        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+            Ok(r) => match r {
+                Some(r) => match convertir_bson_deserializable::<TransactionMajSenseur>(r) {
+                    Ok(r) => r,
+                    Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur conversion document senseur en doc TransactionMajSenseur: {:?}", e))?
+                },
+                None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur chargement doc senseur apres MAJ"))?
+            },
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement transaction senseur : {:?}", e))?
-        };
-        debug!("transaction_maj_senseur Resultat ajout transaction : {:?}", resultat);
-    }
+        }
+    };
+    debug!("transaction_maj_senseur Resultat maj transaction : {:?}", document_transaction);
 
     // Maj noeud
     {
@@ -533,12 +547,12 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
-        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
         let opts = UpdateOptions::builder().upsert(true).build();
         let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
             Ok(r) => r,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement maj noeud : {:?}", e))?
         };
+
         if let Some(_) = resultat.upserted_id {
             debug!("transaction_maj_senseur Creer transaction pour noeud_id {}", transaction_cle.noeud_id);
             let transaction = TransactionMajNoeud::new(&transaction_cle.noeud_id);
@@ -550,7 +564,13 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
         }
     }
 
-    middleware.reponse_ok()
+    debug!("transaction_maj_senseur Resultat ajout transaction : {:?}", document_transaction);
+    let reponse = match middleware.formatter_reponse(&document_transaction, None) {
+        Ok(reponse) => Ok(Some(reponse)),
+        Err(e) => Err(format!("senseurspassifs.document_transaction Erreur preparation reponse : {:?}", e))
+    }?;
+
+    Ok(reponse)
 }
 
 async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
@@ -592,6 +612,7 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
             Ok(r) => {
                 match r {
                     Some(r) => {
+                        debug!("Conversion document maj recu : {:?}", r);
                         match convertir_bson_deserializable::<TransactionMajNoeud>(r) {
                             Ok(r) => r,
                             Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion a TransactionMajNoeud : {:?}", e))?
@@ -1055,6 +1076,8 @@ struct LectureSenseur {
 struct TransactionMajSenseur {
     uuid_senseur: String,
     noeud_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    descriptif: Option<String>,
 }
 
 impl TransactionMajSenseur {
@@ -1064,6 +1087,7 @@ impl TransactionMajSenseur {
         TransactionMajSenseur {
             uuid_senseur: uuid_senseur.into(),
             noeud_id: uuid_noeud.into(),
+            descriptif: None,
         }
     }
 }
