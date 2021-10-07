@@ -272,7 +272,7 @@ async fn consommer(
     mut rx: Receiver<TypeMessage>,
     map_senders: HashMap<String, Sender<TypeMessage>>
 ) {
-    debug!("domaines_senseurspassifs.consommer : Debut thread, mapping : {:?}", map_senders.keys());
+    info!("domaines_senseurspassifs.consommer : Debut thread, mapping : {:?}", map_senders.keys());
 
     while let Some(message) = rx.recv().await {
         match &message {
@@ -285,7 +285,7 @@ async fn consommer(
                 let action = m.action.as_str();
                 let domaine = m.domaine.as_str();
                 let nom_q = m.q.as_str();
-                info!("domaines_senseurspassifs.consommer: Traiter message valide (action: {}, rk: {}, q: {}): {:?}", action, rk, nom_q, contenu);
+                debug!("domaines_senseurspassifs.consommer: Traiter message valide (action: {}, rk: {}, q: {}): {:?}", action, rk, nom_q, contenu);
 
                 // Tenter de mapper avec le nom de la Q (ne fonctionnera pas pour la Q de reponse)
                 let sender = match map_senders.get(nom_q) {
