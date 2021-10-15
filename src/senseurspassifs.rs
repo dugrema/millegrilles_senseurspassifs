@@ -312,7 +312,7 @@ async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gest
     debug!("Consommer requete : {:?}", &message.message);
 
     // Autorisation : On accepte les requetes de 3.protege ou 4.secure
-    match message.verifier_exchanges(vec![Securite::L3Protege, Securite::L4Secure]) {
+    match message.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
         true => Ok(()),
         false => {
             match message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
