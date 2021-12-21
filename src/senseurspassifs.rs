@@ -154,7 +154,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
     let noeud_id = gestionnaire.noeud_id.as_str();
     let securite_prive_prot_sec = vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure];
-    let securite_prot_sec = vec![Securite::L3Protege, Securite::L4Secure];
+    // let securite_prot_sec = vec![Securite::L3Protege, Securite::L4Secure];
     let securite_prive_prot = vec![Securite::L2Prive, Securite::L3Protege];
 
     // RK 2.prive, 3.protege et 4.secure
@@ -186,11 +186,15 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         }
     }
 
-    // let commandes_protegees: Vec<&str> = vec![COMMANDE_CONFIRMER_CLES_SUR_CA];
-    // for cmd in commandes_protegees {
-    //     rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L3Protege});
-    //     rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L4Secure});
-    // }
+    let commandes_protegees: Vec<&str> = vec![
+        // Transactions usager, verifier via commande
+        TRANSACTION_MAJ_SENSEUR,
+        TRANSACTION_MAJ_NOEUD,
+        TRANSACTION_SUPPRESSION_SENSEUR,
+    ];
+    for cmd in commandes_protegees {
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, noeud_id, cmd), exchange: Securite::L3Protege});
+    }
 
     let mut queues = Vec::new();
 
@@ -212,14 +216,12 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
        });
     }
 
-    let transactions_prot_sec = vec![TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
-    for trans in &transactions_prot_sec {
-        for sec in &securite_prot_sec {
-            rk_transactions.push(ConfigRoutingExchange {
-                routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), trans).into(),
-                exchange: sec.to_owned()
-            });
-        }
+    let transactions_sec = vec![TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
+    for trans in &transactions_sec {
+        rk_transactions.push(ConfigRoutingExchange {
+            routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), trans).into(),
+            exchange: Securite::L4Secure,
+        });
     }
 
     // Queue de transactions
@@ -389,9 +391,9 @@ where
     }
 }
 
-async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionnaire_ca: &GestionnaireSenseursPassifs)
+async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage
+    where M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage
 {
     debug!("consommer_commande : {:?}", &m.message);
 
@@ -408,9 +410,13 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
     }?;
 
     match m.action.as_str() {
-        // Commandes standard
-        // COMMANDE_SAUVEGARDER_CLE => commande_sauvegarder_cle(middleware, m, gestionnaire_ca).await,
-        // Commandes inconnues
+        TRANSACTION_MAJ_SENSEUR |
+        TRANSACTION_MAJ_NOEUD |
+        TRANSACTION_SUPPRESSION_SENSEUR => {
+            // Pour l'instant, aucune autre validation. On traite comme une transaction
+            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions()).await?;
+            Ok(None)
+        },
         _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, m.action))?,
     }
 }
@@ -1152,7 +1158,7 @@ mod test_integration {
     #[tokio::test]
     async fn test_requete_liste_noeuds() {
         setup("test_requete_liste_noeuds");
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
@@ -1189,7 +1195,7 @@ mod test_integration {
     #[tokio::test]
     async fn test_requete_liste_senseurs_par_uuid() {
         setup("test_requete_liste_senseurs_par_uuid");
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
@@ -1226,7 +1232,7 @@ mod test_integration {
     #[tokio::test]
     async fn test_requete_liste_senseurs_pour_noeud() {
         setup("test_requete_liste_senseurs_pour_noeud");
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
@@ -1264,7 +1270,7 @@ mod test_integration {
     #[tokio::test]
     async fn test_requete_get_noeud() {
         setup("test_requete_get_noeud");
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
@@ -1302,7 +1308,7 @@ mod test_integration {
     #[tokio::test]
     async fn test_transaction_suppression_senseur() {
         setup("test_requete_get_noeud");
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
@@ -1339,7 +1345,7 @@ mod test_integration {
         #[tokio::test]
     async fn test_transaction_lectures() {
         setup("test_transaction_lectures");
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
