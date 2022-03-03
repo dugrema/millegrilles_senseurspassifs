@@ -235,7 +235,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ));
 
     // Queue de triggers pour Pki
-    queues.push(QueueType::Triggers (format!("{}.{}", DOMAINE_NOM, gestionnaire.noeud_id)));
+    queues.push(QueueType::Triggers (format!("{}.{}", DOMAINE_NOM, gestionnaire.noeud_id), Securite::L3Protege));
 
     queues
 }
