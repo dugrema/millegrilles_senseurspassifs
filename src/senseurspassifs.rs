@@ -62,12 +62,12 @@ pub struct GestionnaireSenseursPassifs {
 impl GestionnaireSenseursPassifs {
     fn get_collection_senseurs(&self) -> String {
         let noeud_id_tronque = self.get_noeud_id_tronque();
-        format!("SenseursPassifs_{}/senseurs", noeud_id_tronque)
+        format!("SenseursPassifs/{}/senseurs", noeud_id_tronque)
     }
 
     fn get_collection_noeuds(&self) -> String {
         let noeud_id_tronque = self.get_noeud_id_tronque();
-        format!("SenseursPassifs_{}/noeuds", noeud_id_tronque)
+        format!("SenseursPassifs/{}/noeuds", noeud_id_tronque)
     }
 
     /// Noeud id hache sur 12 characteres pour noms d'index, tables
@@ -91,7 +91,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
 
     fn get_collection_transactions(&self) -> String {
         let noeud_id_tronque = self.get_noeud_id_tronque();
-        format!("SenseursPassifs_{}", noeud_id_tronque)
+        format!("SenseursPassifs/{}", noeud_id_tronque)
     }
 
     fn get_collections_documents(&self) -> Vec<String> { vec![
@@ -99,15 +99,15 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     ] }
 
     fn get_q_transactions(&self) -> String {
-        format!("{}_{}/transactions", DOMAINE_NOM, self.noeud_id)
+        format!("{}/{}/transactions", DOMAINE_NOM, self.noeud_id)
     }
 
     fn get_q_volatils(&self) -> String {
-        format!("{}_{}/volatils", DOMAINE_NOM, self.noeud_id)
+        format!("{}/{}/volatils", DOMAINE_NOM, self.noeud_id)
     }
 
     fn get_q_triggers(&self) -> String {
-        format!("{}_{}/triggers", DOMAINE_NOM, self.noeud_id)
+        format!("{}/{}/triggers", DOMAINE_NOM, self.noeud_id)
     }
 
     fn preparer_queues(&self) -> Vec<QueueType> { preparer_queues(self) }
@@ -155,7 +155,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     let noeud_id = gestionnaire.noeud_id.as_str();
     let securite_prive_prot_sec = vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure];
     // let securite_prot_sec = vec![Securite::L3Protege, Securite::L4Secure];
-    let securite_prive_prot = vec![Securite::L2Prive, Securite::L3Protege];
+    // let securite_prive_prot = vec![Securite::L2Prive, Securite::L3Protege];
 
     // RK 2.prive, 3.protege et 4.secure
     let requetes_privees: Vec<&str> = vec![
@@ -165,36 +165,44 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         REQUETE_LISTE_SENSEURS_NOEUD,
     ];
     for req in requetes_privees {
-        for sec in &securite_prive_prot {
-            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}.{}", DOMAINE_NOM, noeud_id, req), exchange: sec.to_owned()});
-        }
+        // for sec in &securite_prive_prot {
+            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}.{}", DOMAINE_NOM, noeud_id, req), exchange: Securite::L2Prive});
+        // }
     }
 
     // Requete liste noeuds permet de trouver les noeuds sur toutes les partitions (potentiellement plusieurs reponses)
-    for sec in &securite_prive_prot {
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_NOEUD), exchange: sec.to_owned()});
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_NOEUDS), exchange: sec.to_owned()});
-    }
+    //for sec in &securite_prive_prot {
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_NOEUD), exchange: Securite::L2Prive});
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_NOEUDS), exchange: Securite::L2Prive});
+    //}
 
     let evenements: Vec<&str> = vec![
         EVENEMENT_LECTURE,
     ];
     for evnt in evenements {
-        for sec in &securite_prive_prot {
-            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: sec.to_owned() });
-            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, noeud_id, evnt), exchange: sec.to_owned() });
-        }
+        //for sec in &securite_prive_prot {
+            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive });
+            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, noeud_id, evnt), exchange: Securite::L2Prive });
+        //}
     }
 
-    let commandes_protegees: Vec<&str> = vec![
+    let commandes_transactions: Vec<&str> = vec![
         // Transactions usager, verifier via commande
+        TRANSACTION_LECTURE,
         TRANSACTION_MAJ_SENSEUR,
         TRANSACTION_MAJ_NOEUD,
         TRANSACTION_SUPPRESSION_SENSEUR,
     ];
-    for cmd in commandes_protegees {
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, noeud_id, cmd), exchange: Securite::L3Protege});
+    for cmd in commandes_transactions {
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, noeud_id, cmd), exchange: Securite::L2Prive});
     }
+
+    //for sec in securite_prive_prot {
+        rk_volatils.push(ConfigRoutingExchange {
+            routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
+            exchange: Securite::L2Prive
+       });
+    //}
 
     let mut queues = Vec::new();
 
@@ -209,14 +217,8 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ));
 
     let mut rk_transactions = Vec::new();
-    for sec in securite_prive_prot_sec {
-        rk_transactions.push(ConfigRoutingExchange {
-            routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
-            exchange: sec.to_owned()
-       });
-    }
 
-    let transactions_sec = vec![TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
+    let transactions_sec = vec![TRANSACTION_LECTURE, TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
             routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), trans).into(),
