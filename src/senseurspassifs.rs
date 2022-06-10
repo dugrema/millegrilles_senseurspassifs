@@ -27,12 +27,6 @@ use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson, convertir_bson_value, filtrer_doc_id};
 
 pub const DOMAINE_NOM: &str = "SenseursPassifs";
-// pub const NOM_COLLECTION_LECTURES: &str = "SenseursPassifs_{NOEUD_ID}/lectures";
-// pub const NOM_COLLECTION_TRANSACTIONS: &str = "SenseursPassifs_{NOEUD_ID}";
-
-// const NOM_Q_TRANSACTIONS: &str = "SenseursPassifs/transactions";
-// const NOM_Q_VOLATILS: &str = "SenseursPassifs/volatils";
-// const NOM_Q_TRIGGERS: &str = "SenseursPassifs/triggers";
 
 const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
 const REQUETE_GET_NOEUD: &str = "getNoeud";
@@ -50,29 +44,30 @@ const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
 const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
 const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
 
-const CHAMP_NOEUD_ID: &str = "noeud_id";
+//const CHAMP_INSTANCE_ID: &str = "instance_id";
+const CHAMP_INSTANCE_ID: &str = "instance_id";
 const CHAMP_UUID_SENSEUR: &str = "uuid_senseur";
 const CHAMP_SENSEURS: &str = "senseurs";
 
 #[derive(Clone, Debug)]
 pub struct GestionnaireSenseursPassifs {
-    pub noeud_id: String,
+    pub instance_id: String,
 }
 
 impl GestionnaireSenseursPassifs {
     fn get_collection_senseurs(&self) -> String {
-        let noeud_id_tronque = self.get_noeud_id_tronque();
-        format!("SenseursPassifs/{}/senseurs", noeud_id_tronque)
+        let instance_id_tronque = self.get_instance_id_tronque();
+        format!("SenseursPassifs/{}/senseurs", instance_id_tronque)
     }
 
-    fn get_collection_noeuds(&self) -> String {
-        let noeud_id_tronque = self.get_noeud_id_tronque();
-        format!("SenseursPassifs/{}/noeuds", noeud_id_tronque)
+    fn get_collection_instances(&self) -> String {
+        let instance_id_tronque = self.get_instance_id_tronque();
+        format!("SenseursPassifs/{}/instances", instance_id_tronque)
     }
 
     /// Noeud id hache sur 12 characteres pour noms d'index, tables
-    fn get_noeud_id_tronque(&self) -> String {
-        hacher_uuid(self.noeud_id.as_str(), Some(12)).expect("hachage")
+    fn get_instance_id_tronque(&self) -> String {
+        hacher_uuid(self.instance_id.as_str(), Some(12)).expect("hachage")
     }
 }
 
@@ -90,8 +85,8 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     fn get_nom_domaine(&self) -> String { String::from(DOMAINE_NOM) }
 
     fn get_collection_transactions(&self) -> String {
-        let noeud_id_tronque = self.get_noeud_id_tronque();
-        format!("SenseursPassifs/{}", noeud_id_tronque)
+        let instance_id_tronque = self.get_instance_id_tronque();
+        format!("SenseursPassifs/{}", instance_id_tronque)
     }
 
     fn get_collections_documents(&self) -> Vec<String> { vec![
@@ -99,15 +94,15 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     ] }
 
     fn get_q_transactions(&self) -> String {
-        format!("{}/{}/transactions", DOMAINE_NOM, self.noeud_id)
+        format!("{}/{}/transactions", DOMAINE_NOM, self.instance_id)
     }
 
     fn get_q_volatils(&self) -> String {
-        format!("{}/{}/volatils", DOMAINE_NOM, self.noeud_id)
+        format!("{}/{}/volatils", DOMAINE_NOM, self.instance_id)
     }
 
     fn get_q_triggers(&self) -> String {
-        format!("{}/{}/triggers", DOMAINE_NOM, self.noeud_id)
+        format!("{}/{}/triggers", DOMAINE_NOM, self.instance_id)
     }
 
     fn preparer_queues(&self) -> Vec<QueueType> { preparer_queues(self) }
@@ -152,7 +147,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
 pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueType> {
     let mut rk_volatils = Vec::new();
 
-    let noeud_id = gestionnaire.noeud_id.as_str();
+    let instance_id = gestionnaire.instance_id.as_str();
     let securite_prive_prot_sec = vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure];
     // let securite_prot_sec = vec![Securite::L3Protege, Securite::L4Secure];
     // let securite_prive_prot = vec![Securite::L2Prive, Securite::L3Protege];
@@ -166,7 +161,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ];
     for req in requetes_privees {
         // for sec in &securite_prive_prot {
-            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}.{}", DOMAINE_NOM, noeud_id, req), exchange: Securite::L2Prive});
+            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}.{}", DOMAINE_NOM, instance_id, req), exchange: Securite::L2Prive});
         // }
     }
 
@@ -182,7 +177,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     for evnt in evenements {
         //for sec in &securite_prive_prot {
             rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive });
-            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, noeud_id, evnt), exchange: Securite::L2Prive });
+            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, instance_id, evnt), exchange: Securite::L2Prive });
         //}
     }
 
@@ -194,12 +189,12 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_SUPPRESSION_SENSEUR,
     ];
     for cmd in commandes_transactions {
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, noeud_id, cmd), exchange: Securite::L2Prive});
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, instance_id, cmd), exchange: Securite::L2Prive});
     }
 
     //for sec in securite_prive_prot {
         rk_volatils.push(ConfigRoutingExchange {
-            routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), TRANSACTION_LECTURE).into(),
+            routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, gestionnaire.instance_id.as_str(), TRANSACTION_LECTURE).into(),
             exchange: Securite::L2Prive
        });
     //}
@@ -221,7 +216,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     let transactions_sec = vec![TRANSACTION_LECTURE, TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
-            routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.noeud_id.as_str(), trans).into(),
+            routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.instance_id.as_str(), trans).into(),
             exchange: Securite::L4Secure,
         });
     }
@@ -237,7 +232,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ));
 
     // Queue de triggers pour Pki
-    queues.push(QueueType::Triggers (format!("{}.{}", DOMAINE_NOM, gestionnaire.noeud_id), Securite::L3Protege));
+    queues.push(QueueType::Triggers (format!("{}.{}", DOMAINE_NOM, gestionnaire.instance_id), Securite::L3Protege));
 
     queues
 }
@@ -246,15 +241,13 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), String>
     where M: MongoDao
 {
-    // let noeud_id_tronque = gestionnaire.get_noeud_id_tronque();
-
     // Index senseurs
     let options_lectures_noeud = IndexOptions {
         nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
         unique: false
     };
     let champs_index_lectures_noeud = vec!(
-        ChampIndex {nom_champ: String::from(CHAMP_NOEUD_ID), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
     );
     middleware.create_index(
         gestionnaire.get_collection_senseurs().as_str(),
@@ -281,10 +274,10 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         unique: true
     };
     let champs_index_lectures_noeud = vec!(
-        ChampIndex {nom_champ: String::from(CHAMP_NOEUD_ID), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
     );
     middleware.create_index(
-        gestionnaire.get_collection_noeuds().as_str(),
+        gestionnaire.get_collection_instances().as_str(),
         champs_index_lectures_noeud,
         Some(options_lectures_noeud)
     ).await?;
@@ -512,7 +505,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
     let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
 
     let document_transaction = {
-        let mut set_ops = doc! {CHAMP_NOEUD_ID: &transaction_cle.noeud_id};
+        let mut set_ops = doc! {CHAMP_INSTANCE_ID: &transaction_cle.instance_id};
 
         let mut valeur_transactions = match convertir_to_bson(transaction_cle.clone()) {
             Ok(v) => v,
@@ -547,16 +540,16 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
 
     // Maj noeud
     {
-        let filtre = doc! { CHAMP_NOEUD_ID: &transaction_cle.noeud_id };
+        let filtre = doc! { CHAMP_INSTANCE_ID: &transaction_cle.instance_id };
         let ops = doc! {
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
-                CHAMP_NOEUD_ID: &transaction_cle.noeud_id,
+                CHAMP_INSTANCE_ID: &transaction_cle.instance_id,
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
         let opts = UpdateOptions::builder().upsert(true).build();
-        let collection_noeud = match middleware.get_collection(gestionnaire.get_collection_noeuds().as_str()) {
+        let collection_noeud = match middleware.get_collection(gestionnaire.get_collection_instances().as_str()) {
             Ok(n) => n,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur ouverture collection noeuds: {:?}", e))?
         };
@@ -566,11 +559,11 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
         };
 
         if let Some(_) = resultat.upserted_id {
-            debug!("transaction_maj_senseur Creer transaction pour noeud_id {}", transaction_cle.noeud_id);
-            let transaction = TransactionMajNoeud::new(&transaction_cle.noeud_id);
+            debug!("transaction_maj_senseur Creer transaction pour instance_id {}", transaction_cle.instance_id);
+            let transaction = TransactionMajNoeud::new(&transaction_cle.instance_id);
             let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
                 .exchanges(vec![Securite::L4Secure])
-                .partition(&gestionnaire.noeud_id)
+                .partition(&gestionnaire.instance_id)
                 .build();
             middleware.soumettre_transaction(routage, &transaction, false).await?;
         }
@@ -603,12 +596,12 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
             Ok(v) => v,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion transaction a bson : {:?}", e))?
         };
-        valeurs.remove("noeud_id"); // Enlever cle
+        valeurs.remove("instance_id"); // Enlever cle
 
         let mut ops = doc! {
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
-                CHAMP_NOEUD_ID: &contenu_transaction.noeud_id,
+                CHAMP_INSTANCE_ID: &contenu_transaction.instance_id,
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
@@ -617,8 +610,8 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
             ops.insert("$set", valeurs);
         }
 
-        let filtre = doc! { CHAMP_NOEUD_ID: &contenu_transaction.noeud_id };
-        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
+        let filtre = doc! { CHAMP_INSTANCE_ID: &contenu_transaction.instance_id };
+        let collection = middleware.get_collection(&gestionnaire.get_collection_instances())?;
         let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
         match collection.find_one_and_update(filtre, ops, Some(opts)).await {
             Ok(r) => {
@@ -707,7 +700,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
                 },
                 "$setOnInsert": {
                     CHAMP_CREATION: Utc::now(),
-                    CHAMP_NOEUD_ID: &contenu_transaction.noeud_id,
+                    CHAMP_INSTANCE_ID: &contenu_transaction.instance_id,
                     CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur,
                 },
                 "$currentDate": { CHAMP_MODIFICATION: true },
@@ -722,10 +715,10 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
             if let Some(_) = resultat.upserted_id {
                 debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
                 let transaction = TransactionMajSenseur::new(
-                    &contenu_transaction.uuid_senseur, &contenu_transaction.noeud_id);
+                    &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
                 let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
                     .exchanges(vec![Securite::L4Secure])
-                    .partition(&gestionnaire.noeud_id)
+                    .partition(&gestionnaire.instance_id)
                     .build();
                 middleware.soumettre_transaction(routage, &transaction, false).await?;
             }
@@ -752,7 +745,7 @@ struct TransactionLectures {
     senseur: String,
 
     /// UUID du noeud MilleGrille
-    noeud_id: String,
+    instance_id: String,
 
     /// Type de lecture, e.g. temperature, humidite, pression, voltage, batterie, etc.
     #[serde(rename="type")]
@@ -812,14 +805,14 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
     let noeuds = {
         let filtre = doc! { };
         let projection = doc! {
-            CHAMP_NOEUD_ID: 1,
+            CHAMP_INSTANCE_ID: 1,
             "securite": 1,
             CHAMP_MODIFICATION: 1,
             "descriptif": 1,
             "lcd_actif": 1, "lcd_vpin_onoff": 1, "lcd_vpin_navigation": 1, "lcd_affichage": 1,
         };
         let opts = FindOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
+        let collection = middleware.get_collection(&gestionnaire.get_collection_instances())?;
         let mut curseur = collection.find(filtre, opts).await?;
 
         let mut noeuds = Vec::new();
@@ -831,7 +824,7 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
         noeuds
     };
 
-    let reponse = json!({ "ok": true, "noeuds": noeuds, "partition": &gestionnaire.noeud_id });
+    let reponse = json!({ "ok": true, "noeuds": noeuds, "partition": &gestionnaire.instance_id });
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
@@ -846,7 +839,7 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
         let filtre = doc! { CHAMP_UUID_SENSEUR: {"$in": &requete.uuid_senseurs} };
         let projection = doc! {
             CHAMP_UUID_SENSEUR: 1,
-            CHAMP_NOEUD_ID: 1,
+            CHAMP_INSTANCE_ID: 1,
             // CHAMP_MODIFICATION: 1,
             "derniere_lecture": 1,
             CHAMP_SENSEURS: 1,
@@ -866,7 +859,7 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
         senseurs
     };
 
-    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
+    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.instance_id });
     let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
     debug!("Reponse formattee : {:?}", reponse_formattee);
     Ok(Some(reponse_formattee))
@@ -885,10 +878,10 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
     let requete: RequeteSenseursPourNoeud = m.message.get_msg().map_contenu(None)?;
 
     let senseurs = {
-        let filtre = doc! { CHAMP_NOEUD_ID: &requete.noeud_id };
+        let filtre = doc! { CHAMP_INSTANCE_ID: &requete.instance_id };
         let projection = doc! {
             CHAMP_UUID_SENSEUR: 1,
-            CHAMP_NOEUD_ID: 1,
+            CHAMP_INSTANCE_ID: 1,
             "derniere_lecture": 1,
             CHAMP_SENSEURS: 1,
             "securite": 1,
@@ -908,7 +901,7 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
         senseurs
     };
 
-    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.noeud_id });
+    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.instance_id });
     let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
     debug!("Reponse formattee : {:?}", reponse_formattee);
     Ok(Some(reponse_formattee))
@@ -916,7 +909,7 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct RequeteSenseursPourNoeud {
-    noeud_id: String,
+    instance_id: String,
 }
 
 async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -929,15 +922,15 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
     let noeud = {
         let filtre = doc! { };
         let projection = doc! {
-            CHAMP_NOEUD_ID: 1,
+            CHAMP_INSTANCE_ID: 1,
             "securite": 1,
             CHAMP_MODIFICATION: 1,
             "descriptif": 1,
             "lcd_actif": 1, "lcd_affichage": 1,
         };
-        let filtre = doc! { CHAMP_NOEUD_ID: &requete.noeud_id };
+        let filtre = doc! { CHAMP_INSTANCE_ID: &requete.instance_id };
         let opts = FindOneOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(&gestionnaire.get_collection_noeuds())?;
+        let collection = middleware.get_collection(&gestionnaire.get_collection_instances())?;
         let mut doc = collection.find_one(filtre, opts).await?;
 
         match doc {
@@ -954,13 +947,13 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
             // Inserer valeurs manquantes pour la response
             if let Some(mut o) = val_noeud.as_object_mut() {
                 o.insert("ok".into(), Value::Bool(true));
-                o.insert("partition".into(), Value::String(gestionnaire.noeud_id.clone()));
+                o.insert("partition".into(), Value::String(gestionnaire.instance_id.clone()));
             }
             val_noeud
         },
         None => {
             // Confirmer que la requete s'est bien executee mais rien trouve
-            json!({ "ok": true, "partition": &gestionnaire.noeud_id, CHAMP_NOEUD_ID: None::<&str>})
+            json!({ "ok": true, "partition": &gestionnaire.instance_id, CHAMP_INSTANCE_ID: None::<&str>})
         }
     };
 
@@ -971,14 +964,14 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct RequeteGetNoeud {
-    noeud_id: String
+    instance_id: String
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct InformationSenseur {
     derniere_lecture: Option<DateEpochSeconds>,
     descriptif: Option<String>,
-    noeud_id: String,
+    instance_id: String,
     securite: Option<String>,
 
     senseurs: Option<BTreeMap<String, LectureSenseur>>,
@@ -1016,7 +1009,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         },
         "$setOnInsert": {
             CHAMP_CREATION: Utc::now(),
-            CHAMP_NOEUD_ID: &lecture.noeud_id,
+            CHAMP_INSTANCE_ID: &lecture.instance_id,
             CHAMP_UUID_SENSEUR: &lecture.uuid_senseur,
         },
         "$currentDate": { CHAMP_MODIFICATION: true },
@@ -1029,10 +1022,10 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     // Si on a cree un nouvel element, creer le senseur (et potentiellement le noeud)
     if let Some(uid) = resultat_update.upserted_id {
         debug!("Creation nouvelle transaction pour senseur {}", lecture.uuid_senseur);
-        let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.noeud_id);
+        let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.instance_id);
         let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
             .exchanges(vec![Securite::L4Secure])
-            .partition(&gestionnaire.noeud_id)
+            .partition(&gestionnaire.instance_id)
             .build();
         middleware.soumettre_transaction(routage, &transaction, false).await?;
     }
@@ -1052,7 +1045,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct EvenementLecture {
-    noeud_id: String,
+    instance_id: String,
     uuid_senseur: String,
     senseurs: HashMap<String, LectureSenseur>,
     derniere_lecture: Option<DateEpochSeconds>,
@@ -1087,7 +1080,7 @@ struct LectureSenseur {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct TransactionMajSenseur {
     uuid_senseur: String,
-    noeud_id: String,
+    instance_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     descriptif: Option<String>,
 }
@@ -1098,7 +1091,7 @@ impl TransactionMajSenseur {
     {
         TransactionMajSenseur {
             uuid_senseur: uuid_senseur.into(),
-            noeud_id: uuid_noeud.into(),
+            instance_id: uuid_noeud.into(),
             descriptif: None,
         }
     }
@@ -1106,7 +1099,7 @@ impl TransactionMajSenseur {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct TransactionMajNoeud {
-    noeud_id: String,
+    instance_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     descriptif: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1129,7 +1122,7 @@ impl TransactionMajNoeud {
         where S: Into<String>
     {
         TransactionMajNoeud {
-            noeud_id: uuid_noeud.into(),
+            instance_id: uuid_noeud.into(),
             descriptif: None,
             securite: None,
             lcd_actif: None,
@@ -1155,7 +1148,7 @@ mod test_integration {
 
     use super::*;
 
-    const DUMMY_NOEUD_ID: &str = "43eee47d-fc23-4cf5-b359-70069cf06600";
+    const DUMMY_INSTANCE_ID: &str = "43eee47d-fc23-4cf5-b359-70069cf06600";
 
     #[tokio::test]
     async fn test_requete_liste_noeuds() {
@@ -1164,7 +1157,7 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
         futures.push(tokio::spawn(async move {
 
             let contenu = json!({});
@@ -1201,7 +1194,7 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
         futures.push(tokio::spawn(async move {
 
             let contenu = json!({"uuid_senseurs": vec!["7a2764fa-c457-4f25-af0d-0fc915439b21"]});
@@ -1238,10 +1231,10 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
         futures.push(tokio::spawn(async move {
 
-            let contenu = json!({"noeud_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
+            let contenu = json!({"instance_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
             let message_mg = MessageMilleGrille::new_signer(
                 enveloppe_privee.as_ref(),
                 &contenu,
@@ -1276,10 +1269,10 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
         futures.push(tokio::spawn(async move {
 
-            let contenu = json!({"noeud_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
+            let contenu = json!({"instance_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
             let message_mg = MessageMilleGrille::new_signer(
                 enveloppe_privee.as_ref(),
                 &contenu,
@@ -1314,7 +1307,7 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
         futures.push(tokio::spawn(async move {
 
             let contenu = json!({"uuid_senseur": "7a2764fa-c457-4f25-af0d-0fc915439b21"});
@@ -1351,7 +1344,7 @@ mod test_integration {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let fingerprint = enveloppe_privee.fingerprint().as_str();
 
-        let gestionnaire = GestionnaireSenseursPassifs {noeud_id: DUMMY_NOEUD_ID.into()};
+        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
         futures.push(tokio::spawn(async move {
 
             // Attendre connexion MQ
@@ -1359,7 +1352,7 @@ mod test_integration {
 
             let contenu = json!({
                 "uuid_senseur": "7d32d355-d3fa-44fd-8a4d-323580fe55e2:dht",
-                "noeud_id": "7d32d355-d3fa-44fd-8a4d-323580fe55e2",
+                "instance_id": "7d32d355-d3fa-44fd-8a4d-323580fe55e2",
                 "senseur": "dht/18/temperature",
                 "avg": 22.7,
                 "max": 22.8,

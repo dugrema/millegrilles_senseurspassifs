@@ -26,7 +26,6 @@ use crate::senseurspassifs::GestionnaireSenseursPassifs;
 const DUREE_ATTENTE: u64 = 20000;
 
 // Creer espace static pour conserver les gestionnaires
-// static mut GESTIONNAIRE: GestionnaireSenseursPassifs = GestionnaireSenseursPassifs { noeud_id: "ND" };
 
 static mut GESTIONNAIRES: [TypeGestionnaire; 4] = [TypeGestionnaire::None, TypeGestionnaire::None, TypeGestionnaire::None, TypeGestionnaire::None];
 
@@ -55,14 +54,14 @@ fn charger_gestionnaires() -> Vec<&'static TypeGestionnaire> {
     // Charger une version simplifiee de la configuration - on veut le certificat associe a l'enveloppe privee
     let config = charger_configuration().expect("config");
     let config_noeud = config.get_configuration_noeud();
-    let noeud_id = match &config_noeud.noeud_id {
+    let instance_id = match &config_noeud.instance_id {
         Some(n) => n,
-        None => panic!("MG_NOEUD_ID n'est pas configure")
+        None => panic!("MG_INSTANCE_ID n'est pas configure")
     };
 
     // Inserer les gestionnaires dans la variable static - permet d'obtenir lifetime 'static
     unsafe {
-        GESTIONNAIRES[0] = TypeGestionnaire::NoeudProtege(Arc::new(GestionnaireSenseursPassifs { noeud_id: noeud_id.to_owned() }));
+        GESTIONNAIRES[0] = TypeGestionnaire::NoeudProtege(Arc::new(GestionnaireSenseursPassifs { instance_id: instance_id.to_owned() }));
 
         let mut vec_gestionnaires = Vec::new();
         vec_gestionnaires.extend(&GESTIONNAIRES);
