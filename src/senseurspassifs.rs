@@ -630,6 +630,14 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
         }
     };
 
+    {
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
+            .exchanges(vec![Securite::L2Prive])
+            .partition(&document_transaction.instance_id)
+            .build();
+        middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
+    }
+
     debug!("transaction_maj_noeud Resultat ajout transaction : {:?}", document_transaction);
     match middleware.formatter_reponse(&document_transaction, None) {
         Ok(reponse) => Ok(Some(reponse)),
