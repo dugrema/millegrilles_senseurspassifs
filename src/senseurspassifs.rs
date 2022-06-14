@@ -1016,13 +1016,23 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         None => None
     };
 
-    let senseurs = convertir_to_bson(&lecture.senseurs)?;
+    let mut set_ops = doc! {
+        "derniere_lecture": &lecture.derniere_lecture,
+        "derniere_lecture_dt": derniere_lecture_dt,
+    };
+
+    // let senseurs = convertir_to_bson(&lecture.senseurs)?;
+    for (senseur_id, lecture_senseur) in &lecture.senseurs {
+        set_ops.insert(format!("senseurs.{}", senseur_id), convertir_to_bson(&lecture_senseur)?);
+    }
+
     let ops = doc! {
-        "$set": {
-            CHAMP_SENSEURS: senseurs,
-            "derniere_lecture": &lecture.derniere_lecture,
-            "derniere_lecture_dt": derniere_lecture_dt,
-        },
+        "$set": set_ops,
+        // {
+        //     CHAMP_SENSEURS: senseurs,
+        //     "derniere_lecture": &lecture.derniere_lecture,
+        //     "derniere_lecture_dt": derniere_lecture_dt,
+        // },
         "$setOnInsert": {
             CHAMP_CREATION: Utc::now(),
             CHAMP_INSTANCE_ID: &lecture.instance_id,
@@ -1046,12 +1056,37 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         middleware.soumettre_transaction(routage, &transaction, false).await?;
     }
 
+    // Charger etat a partir de mongo - va recuperer dates, lectures d'autres apps
+    let info_senseur = {
+        let projection = doc! {
+            CHAMP_UUID_SENSEUR: 1,
+            CHAMP_INSTANCE_ID: 1,
+            "derniere_lecture": 1,
+            CHAMP_SENSEURS: 1,
+            "securite": 1,
+            "descriptif": 1,
+        };
+        let filtre = doc! { CHAMP_UUID_SENSEUR: &lecture.uuid_senseur };
+        let opts = FindOneOptions::builder().projection(projection).build();
+        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let doc_senseur = collection.find_one(filtre, opts).await?;
+
+        match doc_senseur {
+            Some(d) => {
+                let info_senseur: InformationSenseur = convertir_bson_deserializable(d)?;
+                debug!("Chargement info senseur pour evenement confirmation : {:?}", info_senseur);
+                info_senseur
+            },
+            None => Err(format!("Erreur chargement senseur a partir de mongo, aucun match sur {}", &lecture.uuid_senseur))?
+        }
+    };
+
     // Bouncer l'evenement sur tous les exchanges appropries
     let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE)
         .exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])
         .build();
 
-    match middleware.emettre_evenement(routage, &lecture).await {
+    match middleware.emettre_evenement(routage, &info_senseur).await {
         Ok(_) => (),
         Err(e) => warn!("senseurspassifs.evenement_domaine_lecture Erreur emission evenement lecture confirmee : {:?}", e)
     }
@@ -1147,265 +1182,265 @@ impl TransactionMajNoeud {
     }
 }
 
-#[cfg(test)]
-mod test_integration {
-    use std::convert::TryFrom;
-    use millegrilles_common_rust::backup::CatalogueHoraire;
-    use millegrilles_common_rust::formatteur_messages::MessageSerialise;
-    use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
-    use millegrilles_common_rust::middleware::IsConfigurationPki;
-    use millegrilles_common_rust::middleware_db::preparer_middleware_db;
-    use millegrilles_common_rust::mongo_dao::convertir_to_bson;
-    use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
-    use millegrilles_common_rust::recepteur_messages::TypeMessage;
-    use millegrilles_common_rust::tokio as tokio;
-
-    use crate::test_setup::setup;
-
-    use super::*;
-
-    const DUMMY_INSTANCE_ID: &str = "43eee47d-fc23-4cf5-b359-70069cf06600";
-
-    #[tokio::test]
-    async fn test_requete_liste_noeuds() {
-        setup("test_requete_liste_noeuds");
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        let enveloppe_privee = middleware.get_enveloppe_privee();
-        let fingerprint = enveloppe_privee.fingerprint().as_str();
-
-        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
-        futures.push(tokio::spawn(async move {
-
-            let contenu = json!({});
-            let message_mg = MessageMilleGrille::new_signer(
-                enveloppe_privee.as_ref(),
-                &contenu,
-                DOMAINE_NOM.into(),
-                REQUETE_LISTE_NOEUDS.into(),
-                None::<&str>,
-                None
-            ).expect("message");
-            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
-
-            // Injecter certificat utilise pour signer
-            message.certificat = Some(enveloppe_privee.enveloppe.clone());
-
-            let mva = MessageValideAction::new(
-                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
-
-            let reponse = requete_liste_noeuds(middleware.as_ref(), mva, &gestionnaire).await.expect("dechiffrage");
-            debug!("test_requete_liste_noeuds Reponse : {:?}", reponse);
-
-            assert_eq!(true, reponse.is_some());
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn test_requete_liste_senseurs_par_uuid() {
-        setup("test_requete_liste_senseurs_par_uuid");
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        let enveloppe_privee = middleware.get_enveloppe_privee();
-        let fingerprint = enveloppe_privee.fingerprint().as_str();
-
-        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
-        futures.push(tokio::spawn(async move {
-
-            let contenu = json!({"uuid_senseurs": vec!["7a2764fa-c457-4f25-af0d-0fc915439b21"]});
-            let message_mg = MessageMilleGrille::new_signer(
-                enveloppe_privee.as_ref(),
-                &contenu,
-                DOMAINE_NOM.into(),
-                REQUETE_LISTE_NOEUDS.into(),
-                None::<&str>,
-                None
-            ).expect("message");
-            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
-
-            // Injecter certificat utilise pour signer
-            message.certificat = Some(enveloppe_privee.enveloppe.clone());
-
-            let mva = MessageValideAction::new(
-                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
-
-            let reponse = requete_liste_senseurs_par_uuid(middleware.as_ref(), mva, &gestionnaire).await.expect("dechiffrage");
-            debug!("test_requete_liste_senseurs_par_uuid Reponse : {:?}", reponse);
-
-            assert_eq!(true, reponse.is_some());
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn test_requete_liste_senseurs_pour_noeud() {
-        setup("test_requete_liste_senseurs_pour_noeud");
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        let enveloppe_privee = middleware.get_enveloppe_privee();
-        let fingerprint = enveloppe_privee.fingerprint().as_str();
-
-        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
-        futures.push(tokio::spawn(async move {
-
-            let contenu = json!({"instance_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
-            let message_mg = MessageMilleGrille::new_signer(
-                enveloppe_privee.as_ref(),
-                &contenu,
-                DOMAINE_NOM.into(),
-                REQUETE_LISTE_NOEUDS.into(),
-                None::<&str>,
-                None
-            ).expect("message");
-            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
-
-            // Injecter certificat utilise pour signer
-            message.certificat = Some(enveloppe_privee.enveloppe.clone());
-
-            let mva = MessageValideAction::new(
-                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
-
-            let reponse = requete_liste_senseurs_pour_noeud(middleware.as_ref(), mva, &gestionnaire)
-                .await.expect("requete");
-            debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
-
-            assert_eq!(true, reponse.is_some());
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn test_requete_get_noeud() {
-        setup("test_requete_get_noeud");
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        let enveloppe_privee = middleware.get_enveloppe_privee();
-        let fingerprint = enveloppe_privee.fingerprint().as_str();
-
-        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
-        futures.push(tokio::spawn(async move {
-
-            let contenu = json!({"instance_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
-            let message_mg = MessageMilleGrille::new_signer(
-                enveloppe_privee.as_ref(),
-                &contenu,
-                DOMAINE_NOM.into(),
-                REQUETE_LISTE_NOEUDS.into(),
-                None::<&str>,
-                None
-            ).expect("message");
-            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
-
-            // Injecter certificat utilise pour signer
-            message.certificat = Some(enveloppe_privee.enveloppe.clone());
-
-            let mva = MessageValideAction::new(
-                message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
-
-            let reponse = requete_get_noeud(middleware.as_ref(), mva, &gestionnaire)
-                .await.expect("requete");
-            debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
-
-            assert_eq!(true, reponse.is_some());
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn test_transaction_suppression_senseur() {
-        setup("test_requete_get_noeud");
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        let enveloppe_privee = middleware.get_enveloppe_privee();
-        let fingerprint = enveloppe_privee.fingerprint().as_str();
-
-        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
-        futures.push(tokio::spawn(async move {
-
-            let contenu = json!({"uuid_senseur": "7a2764fa-c457-4f25-af0d-0fc915439b21"});
-            let message_mg = MessageMilleGrille::new_signer(
-                enveloppe_privee.as_ref(),
-                &contenu,
-                DOMAINE_NOM.into(),
-                REQUETE_LISTE_NOEUDS.into(),
-                None::<&str>,
-                None
-            ).expect("message");
-            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
-
-            // Injecter certificat utilise pour signer
-            message.certificat = Some(enveloppe_privee.enveloppe.clone());
-
-            let transaction = TransactionImpl::try_from(message).expect("treansaction");
-
-            let reponse = transaction_suppression_senseur(middleware.as_ref(), transaction, &gestionnaire)
-                .await.expect("requete");
-            debug!("test_transaction_suppression_senseur Reponse : {:?}", reponse);
-
-            assert_eq!(true, reponse.is_some());
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-        #[tokio::test]
-    async fn test_transaction_lectures() {
-        setup("test_transaction_lectures");
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        let enveloppe_privee = middleware.get_enveloppe_privee();
-        let fingerprint = enveloppe_privee.fingerprint().as_str();
-
-        let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
-        futures.push(tokio::spawn(async move {
-
-            // Attendre connexion MQ
-            tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
-
-            let contenu = json!({
-                "uuid_senseur": "7d32d355-d3fa-44fd-8a4d-323580fe55e2:dht",
-                "instance_id": "7d32d355-d3fa-44fd-8a4d-323580fe55e2",
-                "senseur": "dht/18/temperature",
-                "avg": 22.7,
-                "max": 22.8,
-                "min": 22.6,
-                "timestamp": 1631156400,
-                "timestamp_max": 1631159993,
-                "timestamp_min": 1631156413,
-                "type": "temperature",
-                "lectures": [
-                    {"timestamp": 1631156413, "valeur": 22.8},
-                    {"timestamp": 1631156428, "valeur": 22.6},
-                    {"timestamp": 1631156444, "valeur": 22.7}
-                ]
-            });
-            let message_mg = MessageMilleGrille::new_signer(
-                enveloppe_privee.as_ref(),
-                &contenu,
-                DOMAINE_NOM.into(),
-                REQUETE_LISTE_NOEUDS.into(),
-                None::<&str>,
-                None
-            ).expect("message");
-            let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
-
-            // Injecter certificat utilise pour signer
-            message.certificat = Some(enveloppe_privee.enveloppe.clone());
-
-            let transaction = TransactionImpl::try_from(message).expect("transaction");
-
-            let reponse = transaction_lectures(middleware.as_ref(), transaction, &gestionnaire)
-                .await.expect("requete");
-            debug!("test_transaction_lectures Reponse : {:?}", reponse);
-
-            assert_eq!(true, reponse.is_some());
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-}
+// #[cfg(test)]
+// mod test_integration {
+//     use std::convert::TryFrom;
+//     use millegrilles_common_rust::backup::CatalogueHoraire;
+//     use millegrilles_common_rust::formatteur_messages::MessageSerialise;
+//     use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
+//     use millegrilles_common_rust::middleware::IsConfigurationPki;
+//     use millegrilles_common_rust::middleware_db::preparer_middleware_db;
+//     use millegrilles_common_rust::mongo_dao::convertir_to_bson;
+//     use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
+//     use millegrilles_common_rust::recepteur_messages::TypeMessage;
+//     use millegrilles_common_rust::tokio as tokio;
+//
+//     use crate::test_setup::setup;
+//
+//     use super::*;
+//
+//     const DUMMY_INSTANCE_ID: &str = "43eee47d-fc23-4cf5-b359-70069cf06600";
+//
+//     #[tokio::test]
+//     async fn test_requete_liste_noeuds() {
+//         setup("test_requete_liste_noeuds");
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         let enveloppe_privee = middleware.get_enveloppe_privee();
+//         let fingerprint = enveloppe_privee.fingerprint().as_str();
+//
+//         let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
+//         futures.push(tokio::spawn(async move {
+//
+//             let contenu = json!({});
+//             let message_mg = MessageMilleGrille::new_signer(
+//                 enveloppe_privee.as_ref(),
+//                 &contenu,
+//                 DOMAINE_NOM.into(),
+//                 REQUETE_LISTE_NOEUDS.into(),
+//                 None::<&str>,
+//                 None
+//             ).expect("message");
+//             let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+//
+//             // Injecter certificat utilise pour signer
+//             message.certificat = Some(enveloppe_privee.enveloppe.clone());
+//
+//             let mva = MessageValideAction::new(
+//                 message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+//
+//             let reponse = requete_liste_noeuds(middleware.as_ref(), mva, &gestionnaire).await.expect("dechiffrage");
+//             debug!("test_requete_liste_noeuds Reponse : {:?}", reponse);
+//
+//             assert_eq!(true, reponse.is_some());
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn test_requete_liste_senseurs_par_uuid() {
+//         setup("test_requete_liste_senseurs_par_uuid");
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         let enveloppe_privee = middleware.get_enveloppe_privee();
+//         let fingerprint = enveloppe_privee.fingerprint().as_str();
+//
+//         let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
+//         futures.push(tokio::spawn(async move {
+//
+//             let contenu = json!({"uuid_senseurs": vec!["7a2764fa-c457-4f25-af0d-0fc915439b21"]});
+//             let message_mg = MessageMilleGrille::new_signer(
+//                 enveloppe_privee.as_ref(),
+//                 &contenu,
+//                 DOMAINE_NOM.into(),
+//                 REQUETE_LISTE_NOEUDS.into(),
+//                 None::<&str>,
+//                 None
+//             ).expect("message");
+//             let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+//
+//             // Injecter certificat utilise pour signer
+//             message.certificat = Some(enveloppe_privee.enveloppe.clone());
+//
+//             let mva = MessageValideAction::new(
+//                 message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+//
+//             let reponse = requete_liste_senseurs_par_uuid(middleware.as_ref(), mva, &gestionnaire).await.expect("dechiffrage");
+//             debug!("test_requete_liste_senseurs_par_uuid Reponse : {:?}", reponse);
+//
+//             assert_eq!(true, reponse.is_some());
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn test_requete_liste_senseurs_pour_noeud() {
+//         setup("test_requete_liste_senseurs_pour_noeud");
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         let enveloppe_privee = middleware.get_enveloppe_privee();
+//         let fingerprint = enveloppe_privee.fingerprint().as_str();
+//
+//         let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
+//         futures.push(tokio::spawn(async move {
+//
+//             let contenu = json!({"instance_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
+//             let message_mg = MessageMilleGrille::new_signer(
+//                 enveloppe_privee.as_ref(),
+//                 &contenu,
+//                 DOMAINE_NOM.into(),
+//                 REQUETE_LISTE_NOEUDS.into(),
+//                 None::<&str>,
+//                 None
+//             ).expect("message");
+//             let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+//
+//             // Injecter certificat utilise pour signer
+//             message.certificat = Some(enveloppe_privee.enveloppe.clone());
+//
+//             let mva = MessageValideAction::new(
+//                 message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+//
+//             let reponse = requete_liste_senseurs_pour_noeud(middleware.as_ref(), mva, &gestionnaire)
+//                 .await.expect("requete");
+//             debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
+//
+//             assert_eq!(true, reponse.is_some());
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn test_requete_get_noeud() {
+//         setup("test_requete_get_noeud");
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         let enveloppe_privee = middleware.get_enveloppe_privee();
+//         let fingerprint = enveloppe_privee.fingerprint().as_str();
+//
+//         let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
+//         futures.push(tokio::spawn(async move {
+//
+//             let contenu = json!({"instance_id": "48c7c654-b896-4362-a5a1-9b2c7cfdf5c4"});
+//             let message_mg = MessageMilleGrille::new_signer(
+//                 enveloppe_privee.as_ref(),
+//                 &contenu,
+//                 DOMAINE_NOM.into(),
+//                 REQUETE_LISTE_NOEUDS.into(),
+//                 None::<&str>,
+//                 None
+//             ).expect("message");
+//             let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+//
+//             // Injecter certificat utilise pour signer
+//             message.certificat = Some(enveloppe_privee.enveloppe.clone());
+//
+//             let mva = MessageValideAction::new(
+//                 message, "dummy_q", "routing_key", "domaine", "action", TypeMessageOut::Requete);
+//
+//             let reponse = requete_get_noeud(middleware.as_ref(), mva, &gestionnaire)
+//                 .await.expect("requete");
+//             debug!("test_requete_liste_senseurs_pour_noeud Reponse : {:?}", reponse);
+//
+//             assert_eq!(true, reponse.is_some());
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn test_transaction_suppression_senseur() {
+//         setup("test_requete_get_noeud");
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         let enveloppe_privee = middleware.get_enveloppe_privee();
+//         let fingerprint = enveloppe_privee.fingerprint().as_str();
+//
+//         let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
+//         futures.push(tokio::spawn(async move {
+//
+//             let contenu = json!({"uuid_senseur": "7a2764fa-c457-4f25-af0d-0fc915439b21"});
+//             let message_mg = MessageMilleGrille::new_signer(
+//                 enveloppe_privee.as_ref(),
+//                 &contenu,
+//                 DOMAINE_NOM.into(),
+//                 REQUETE_LISTE_NOEUDS.into(),
+//                 None::<&str>,
+//                 None
+//             ).expect("message");
+//             let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+//
+//             // Injecter certificat utilise pour signer
+//             message.certificat = Some(enveloppe_privee.enveloppe.clone());
+//
+//             let transaction = TransactionImpl::try_from(message).expect("treansaction");
+//
+//             let reponse = transaction_suppression_senseur(middleware.as_ref(), transaction, &gestionnaire)
+//                 .await.expect("requete");
+//             debug!("test_transaction_suppression_senseur Reponse : {:?}", reponse);
+//
+//             assert_eq!(true, reponse.is_some());
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//         #[tokio::test]
+//     async fn test_transaction_lectures() {
+//         setup("test_transaction_lectures");
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         let enveloppe_privee = middleware.get_enveloppe_privee();
+//         let fingerprint = enveloppe_privee.fingerprint().as_str();
+//
+//         let gestionnaire = GestionnaireSenseursPassifs { instance_id: DUMMY_INSTANCE_ID.into()};
+//         futures.push(tokio::spawn(async move {
+//
+//             // Attendre connexion MQ
+//             tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+//
+//             let contenu = json!({
+//                 "uuid_senseur": "7d32d355-d3fa-44fd-8a4d-323580fe55e2:dht",
+//                 "instance_id": "7d32d355-d3fa-44fd-8a4d-323580fe55e2",
+//                 "senseur": "dht/18/temperature",
+//                 "avg": 22.7,
+//                 "max": 22.8,
+//                 "min": 22.6,
+//                 "timestamp": 1631156400,
+//                 "timestamp_max": 1631159993,
+//                 "timestamp_min": 1631156413,
+//                 "type": "temperature",
+//                 "lectures": [
+//                     {"timestamp": 1631156413, "valeur": 22.8},
+//                     {"timestamp": 1631156428, "valeur": 22.6},
+//                     {"timestamp": 1631156444, "valeur": 22.7}
+//                 ]
+//             });
+//             let message_mg = MessageMilleGrille::new_signer(
+//                 enveloppe_privee.as_ref(),
+//                 &contenu,
+//                 DOMAINE_NOM.into(),
+//                 REQUETE_LISTE_NOEUDS.into(),
+//                 None::<&str>,
+//                 None
+//             ).expect("message");
+//             let mut message = MessageSerialise::from_parsed(message_mg).expect("serialise");
+//
+//             // Injecter certificat utilise pour signer
+//             message.certificat = Some(enveloppe_privee.enveloppe.clone());
+//
+//             let transaction = TransactionImpl::try_from(message).expect("transaction");
+//
+//             let reponse = transaction_lectures(middleware.as_ref(), transaction, &gestionnaire)
+//                 .await.expect("requete");
+//             debug!("test_transaction_lectures Reponse : {:?}", reponse);
+//
+//             assert_eq!(true, reponse.is_some());
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+// }
