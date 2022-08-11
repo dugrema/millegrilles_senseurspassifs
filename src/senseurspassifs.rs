@@ -111,7 +111,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         true
     }
 
-    async fn preparer_index_mongodb_custom<M>(&self, middleware: &M) -> Result<(), String> where M: MongoDao {
+    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), String> where M: MongoDao {
         preparer_index_mongodb_custom(middleware, &self).await
     }
 
