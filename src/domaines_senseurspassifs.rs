@@ -203,15 +203,17 @@ async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnair
         let maintenant = chrono::Utc::now();
         debug!("domaines_senseurspassifs.entretien  Execution task d'entretien Core {:?}", maintenant);
 
-        if prochain_chargement_certificats_maitredescles < maintenant {
-            match middleware.charger_certificats_chiffrage(middleware.get_enveloppe_privee().enveloppe.as_ref()).await {
-                Ok(()) => {
-                    prochain_chargement_certificats_maitredescles = maintenant + intervalle_chargement_certificats_maitredescles;
-                    debug!("Prochain chargement cert maitredescles: {:?}", prochain_chargement_certificats_maitredescles);
-                },
-                Err(e) => warn!("Erreur chargement certificats de maitre des cles : {:?}", e)
-            }
-        }
+        // if prochain_chargement_certificats_maitredescles < maintenant {
+        //     let enveloppe_privee = middleware.get_enveloppe_privee();
+        //     let certificat = enveloppe_privee.enveloppe.clone();
+        //     match middleware.charger_certificats_chiffrage(middleware, enveloppe_privee, certificat.as_ref()).await {
+        //         Ok(()) => {
+        //             prochain_chargement_certificats_maitredescles = maintenant + intervalle_chargement_certificats_maitredescles;
+        //             debug!("Prochain chargement cert maitredescles: {:?}", prochain_chargement_certificats_maitredescles);
+        //         },
+        //         Err(e) => warn!("Erreur chargement certificats de maitre des cles : {:?}", e)
+        //     }
+        // }
 
         // Sleep jusqu'au prochain entretien ou evenement MQ (e.g. connexion)
         debug!("domaines_senseurspassifs.entretien Fin cycle, sleep {} secondes", DUREE_ATTENTE / 1000);
