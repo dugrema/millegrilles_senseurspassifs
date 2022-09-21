@@ -84,25 +84,25 @@ impl TraiterTransaction for GestionnaireSenseursPassifs {
 impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     fn get_nom_domaine(&self) -> String { String::from(DOMAINE_NOM) }
 
-    fn get_collection_transactions(&self) -> String {
+    fn get_collection_transactions(&self) -> Option<String> {
         let instance_id_tronque = self.get_instance_id_tronque();
-        format!("SenseursPassifs/{}", instance_id_tronque)
+        Some(format!("SenseursPassifs/{}", instance_id_tronque))
     }
 
     fn get_collections_documents(&self) -> Vec<String> { vec![
         self.get_collection_senseurs()
     ] }
 
-    fn get_q_transactions(&self) -> String {
-        format!("{}/{}/transactions", DOMAINE_NOM, self.instance_id)
+    fn get_q_transactions(&self) -> Option<String> {
+        Some(format!("{}/{}/transactions", DOMAINE_NOM, self.instance_id))
     }
 
-    fn get_q_volatils(&self) -> String {
-        format!("{}/{}/volatils", DOMAINE_NOM, self.instance_id)
+    fn get_q_volatils(&self) -> Option<String> {
+        Some(format!("{}/{}/volatils", DOMAINE_NOM, self.instance_id))
     }
 
-    fn get_q_triggers(&self) -> String {
-        format!("{}/{}/triggers", DOMAINE_NOM, self.instance_id)
+    fn get_q_triggers(&self) -> Option<String> {
+        Some(format!("{}/{}/triggers", DOMAINE_NOM, self.instance_id))
     }
 
     fn preparer_queues(&self) -> Vec<QueueType> { preparer_queues(self) }
@@ -131,7 +131,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         consommer_evenement(middleware, message, self).await
     }
 
-    async fn entretien<M>(&self, middleware: Arc<M>) where M: Middleware + 'static {
+    async fn entretien<M>(self: &'static Self, middleware: Arc<M>) where M: Middleware + 'static {
         entretien(middleware).await
     }
 
@@ -204,10 +204,11 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     // Queue de messages volatils (requete, commande, evenements)
     queues.push(QueueType::ExchangeQueue (
         ConfigQueue {
-            nom_queue: gestionnaire.get_q_volatils().into(),
+            nom_queue: gestionnaire.get_q_volatils().expect("get_q_volatils").into(),
             routing_keys: rk_volatils,
             ttl: DEFAULT_Q_TTL.into(),
             durable: false,
+            autodelete: false,
         }
     ));
 
@@ -224,10 +225,11 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     // Queue de transactions
     queues.push(QueueType::ExchangeQueue (
         ConfigQueue {
-            nom_queue: gestionnaire.get_q_transactions().into(),
+            nom_queue: gestionnaire.get_q_transactions().expect("get_q_transactions").into(),
             routing_keys: rk_transactions,
             ttl: None,
             durable: false,
+            autodelete: false,
         }
     ));
 
@@ -379,7 +381,7 @@ where
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_LECTURE |
         TRANSACTION_SUPPRESSION_SENSEUR => {
-            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions()).await?;
+            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions().expect("get_collection_transactions")).await?;
             Ok(None)
         },
         _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", m.action))?,
@@ -409,7 +411,7 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR => {
             // Pour l'instant, aucune autre validation. On traite comme une transaction
-            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions()).await?;
+            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions().expect("get_collection_transactions")).await?;
             Ok(None)
         },
         _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, m.action))?,

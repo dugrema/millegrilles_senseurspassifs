@@ -27,22 +27,16 @@ const DUREE_ATTENTE: u64 = 20000;
 
 // Creer espace static pour conserver les gestionnaires
 
-static mut GESTIONNAIRES: [TypeGestionnaire; 4] = [TypeGestionnaire::None, TypeGestionnaire::None, TypeGestionnaire::None, TypeGestionnaire::None];
-
-/// Enum pour distinger les types de gestionnaires.
-#[derive(Clone, Debug)]
-enum TypeGestionnaire {
-    NoeudProtege(Arc<GestionnaireSenseursPassifs>),
-    None
-}
+static mut GESTIONNAIRE: Option<GestionnaireSenseursPassifs> = None;
 
 pub async fn run() {
 
     // Init gestionnaires ('static)
-    let gestionnaires = charger_gestionnaires();
+    charger_gestionnaires();
 
     // Wiring
-    let (futures, _) = build(gestionnaires).await;
+    let gestionnaire = unsafe { GESTIONNAIRE.as_ref().expect("gestionnaire") };
+    let futures = build(gestionnaire).await;
 
     // Run
     executer(futures).await
@@ -50,116 +44,49 @@ pub async fn run() {
 
 /// Fonction qui lit le certificat local et extrait les fingerprints idmg et de partition
 /// Conserve les gestionnaires dans la variable GESTIONNAIRES 'static
-fn charger_gestionnaires() -> Vec<&'static TypeGestionnaire> {
+fn charger_gestionnaires() {
     // Charger une version simplifiee de la configuration - on veut le certificat associe a l'enveloppe privee
     let config = charger_configuration().expect("config");
     let config_noeud = config.get_configuration_noeud();
     let instance_id = match &config_noeud.instance_id {
         Some(n) => n,
-        None => panic!("MG_INSTANCE_ID n'est pas configure")
+        None => panic!("INSTANCE_ID n'est pas configure")
     };
 
     // Inserer les gestionnaires dans la variable static - permet d'obtenir lifetime 'static
     unsafe {
-        GESTIONNAIRES[0] = TypeGestionnaire::NoeudProtege(Arc::new(GestionnaireSenseursPassifs { instance_id: instance_id.to_owned() }));
-
-        let mut vec_gestionnaires = Vec::new();
-        vec_gestionnaires.extend(&GESTIONNAIRES);
-        vec_gestionnaires
+        GESTIONNAIRE = Some(GestionnaireSenseursPassifs { instance_id: instance_id.to_owned() });
     }
 }
 
-async fn build(gestionnaires: Vec<&'static TypeGestionnaire>) -> (FuturesUnordered<JoinHandle<()>>, Arc<MiddlewareDb>) {
-
-    // Recuperer configuration des Q de tous les domaines
-    let queues = {
-        let mut queues: Vec<QueueType> = Vec::new();
-        for g in gestionnaires.clone() {
-            match g {
-                TypeGestionnaire::NoeudProtege(g) => {
-                    queues.extend(g.preparer_queues());
-                },
-                TypeGestionnaire::None => ()
-            }
-        }
-        queues
-    };
-
-    // Listeners de connexion MQ
-    let (tx_entretien, rx_entretien) = mpsc::channel(1);
-    let listeners = {
-        let mut callbacks: Callback<EventMq> = Callback::new();
-        callbacks.register(Box::new(move |event| {
-            debug!("Callback sur connexion a MQ, event : {:?}", event);
-            let tx_ref = tx_entretien.clone();
-            let _ = spawn(async move {
-                match tx_ref.send(event).await {
-                    Ok(_) => (),
-                    Err(e) => error!("Erreur queuing via callback : {:?}", e)
-                }
-            });
-        }));
-
-        Some(Mutex::new(callbacks))
-    };
-
-    // Preparer middleware avec acces direct aux tables Pki (le domaine est local)
-    // let (
-    //     middleware,
-    //     rx_messages_verifies,
-    //     rx_messages_verif_reply,
-    //     rx_triggers,
-    //     future_recevoir_messages
-    // ) = preparer_middleware_db(queues, listeners);
-
-    let middleware_hooks = preparer_middleware_db(queues, listeners);
+async fn build(gestionnaire: &'static GestionnaireSenseursPassifs) -> FuturesUnordered<JoinHandle<()>> {
+    let middleware_hooks = preparer_middleware_db();
     let middleware = middleware_hooks.middleware;
+
+    // Tester connexion redis
+    match middleware.redis.liste_certificats_fingerprints().await {
+         Ok(fingerprints_redis) => {
+             info!("redis.liste_certificats_fingerprints Resultat : {:?}", fingerprints_redis);
+         },
+         Err(e) => warn!("redis.liste_certificats_fingerprints Erreur test de connexion redis : {:?}", e)
+    }
 
     // Preparer les green threads de tous les domaines/processus
     let mut futures = FuturesUnordered::new();
-    {
-        let mut map_senders: HashMap<String, Sender<TypeMessage>> = HashMap::new();
 
-        // ** Domaines **
-        {
-            for g in gestionnaires.clone() {
-                let (
-                    routing_g,
-                    futures_g,
-                ) = match g {
-                    TypeGestionnaire::NoeudProtege(g) => {
-                        g.preparer_threads(middleware.clone()).await.expect("gestionnaire")
-                    },
-                    TypeGestionnaire::None => (HashMap::new(), FuturesUnordered::new()),
-                };
-                futures.extend(futures_g);        // Deplacer vers futures globaux
-                map_senders.extend(routing_g);    // Deplacer vers mapping global
-            }
-        }
+    // ** Domaines **
+    futures.extend(gestionnaire.preparer_threads(middleware.clone()).await.expect("preparer_threads"));
 
-        // ** Wiring global **
+    // ** Thread d'entretien **
+    futures.push(spawn(entretien(middleware.clone(), gestionnaire)));
 
-        // Creer consommateurs MQ globaux pour rediriger messages recus vers Q internes appropriees
-        futures.push(spawn(
-            consommer(middleware.clone(), middleware_hooks.rx_messages_verifies, map_senders.clone())
-        ));
-        futures.push(spawn(
-            consommer(middleware.clone(), middleware_hooks.rx_messages_verif_reply, map_senders.clone())
-        ));
-        futures.push(spawn(
-            consommer(middleware.clone(), middleware_hooks.rx_triggers, map_senders.clone())
-        ));
-
-        // ** Thread d'entretien **
-        futures.push(spawn(entretien(middleware.clone(), rx_entretien, gestionnaires.clone())));
-
-        // Thread ecoute et validation des messages
-        for f in middleware_hooks.futures {
-            futures.push(f);
-        }
+    // Thread ecoute et validation des messages
+    info!("domaines_maitredescles.build Ajout {} futures dans middleware_hooks", futures.len());
+    for f in middleware_hooks.futures {
+        futures.push(f);
     }
 
-    (futures, middleware)
+    futures
 }
 
 async fn executer(mut futures: FuturesUnordered<JoinHandle<()>>) {
@@ -169,24 +96,13 @@ async fn executer(mut futures: FuturesUnordered<JoinHandle<()>>) {
 }
 
 /// Thread d'entretien
-async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnaires: Vec<&'static TypeGestionnaire>)
+async fn entretien<M>(middleware: Arc<M>, gestionnaire: &'static GestionnaireSenseursPassifs)
     where M: Middleware
 {
     let mut certificat_emis = false;
 
     // Liste de collections de transactions pour tous les domaines geres par Core
-    let collections_transaction = {
-        let mut coll_docs_strings = Vec::new();
-        for g in &gestionnaires {
-            match g {
-                TypeGestionnaire::NoeudProtege(g) => {
-                    coll_docs_strings.push(g.get_collection_transactions());
-                },
-                TypeGestionnaire::None => ()
-            }
-        }
-        coll_docs_strings
-    };
+    let collections_transaction = vec![gestionnaire.get_collection_transactions().expect("get_collection_transactions")];
 
     let mut prochain_chargement_certificats_maitredescles = chrono::Utc::now();
     let intervalle_chargement_certificats_maitredescles = chrono::Duration::minutes(5);
@@ -203,48 +119,10 @@ async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnair
         let maintenant = chrono::Utc::now();
         debug!("domaines_senseurspassifs.entretien  Execution task d'entretien Core {:?}", maintenant);
 
-        // if prochain_chargement_certificats_maitredescles < maintenant {
-        //     let enveloppe_privee = middleware.get_enveloppe_privee();
-        //     let certificat = enveloppe_privee.enveloppe.clone();
-        //     match middleware.charger_certificats_chiffrage(middleware, enveloppe_privee, certificat.as_ref()).await {
-        //         Ok(()) => {
-        //             prochain_chargement_certificats_maitredescles = maintenant + intervalle_chargement_certificats_maitredescles;
-        //             debug!("Prochain chargement cert maitredescles: {:?}", prochain_chargement_certificats_maitredescles);
-        //         },
-        //         Err(e) => warn!("Erreur chargement certificats de maitre des cles : {:?}", e)
-        //     }
-        // }
-
         // Sleep jusqu'au prochain entretien ou evenement MQ (e.g. connexion)
         debug!("domaines_senseurspassifs.entretien Fin cycle, sleep {} secondes", DUREE_ATTENTE / 1000);
         let duration = DurationTokio::from_millis(DUREE_ATTENTE);
-
-        let result = timeout(duration, rx.recv()).await;
-        match result {
-            Ok(inner) => {
-                debug!("domaines_senseurspassifs.entretien Recu event MQ : {:?}", inner);
-                match inner {
-                    Some(e) => {
-                        match e {
-                            EventMq::Connecte => {
-                            },
-                            EventMq::Deconnecte => {
-                                // Reset flag certificat
-                                certificat_emis = false;
-                            }
-                        }
-                    },
-                    None => {
-                        warn!("domaines_senseurspassifs.entretien MQ n'est pas disponible, on ferme");
-                        break
-                    },
-                }
-
-            },
-            Err(_) => {
-                debug!("domaines_senseurspassifs.entretien entretien Timeout, entretien est du");
-            }
-        }
+        sleep(duration).await;
 
         middleware.entretien_validateur().await;
 
@@ -271,15 +149,6 @@ async fn entretien<M>(middleware: Arc<M>, mut rx: Receiver<EventMq>, gestionnair
                 Err(e) => error!("Erreur emission certificat local : {:?}", e),
             }
             debug!("domaines_senseurspassifs.entretien Fin emission traitement certificat local, resultat : {}", certificat_emis);
-        }
-
-        for g in &gestionnaires {
-            match g {
-                TypeGestionnaire::NoeudProtege(g) => {
-                    debug!("Entretien SenseursPassifs noeud protege");
-                },
-                _ => ()
-            }
         }
 
     }
