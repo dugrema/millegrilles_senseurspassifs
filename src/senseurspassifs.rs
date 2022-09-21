@@ -14,7 +14,7 @@ use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMil
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
-use millegrilles_common_rust::middleware::{Middleware, sauvegarder_transaction_recue};
+use millegrilles_common_rust::middleware::{Middleware, sauvegarder_traiter_transaction};
 use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneAndUpdateOptions, FindOneOptions, FindOptions, Hint, ReturnDocument, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::MessageValideAction;
@@ -381,8 +381,7 @@ where
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_LECTURE |
         TRANSACTION_SUPPRESSION_SENSEUR => {
-            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions().expect("get_collection_transactions")).await?;
-            Ok(None)
+            Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
         _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", m.action))?,
     }
@@ -411,8 +410,7 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR => {
             // Pour l'instant, aucune autre validation. On traite comme une transaction
-            sauvegarder_transaction_recue(middleware, m, &gestionnaire.get_collection_transactions().expect("get_collection_transactions")).await?;
-            Ok(None)
+            Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
         _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, m.action))?,
     }
@@ -483,6 +481,7 @@ async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestionnai
         M: ValidateurX509 + GenerateurMessages + MongoDao,
         T: Transaction
 {
+    debug!("aiguillage_transaction {}", transaction.get_action());
     match transaction.get_action() {
         TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
