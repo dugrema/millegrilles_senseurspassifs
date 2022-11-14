@@ -8,6 +8,7 @@ use millegrilles_common_rust::bson::{DateTime, doc, Document};
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 // use millegrilles_common_rust::chiffrage_cle::CommandeSauvegarderCle;
 use millegrilles_common_rust::{chrono, chrono::Utc};
+use millegrilles_common_rust::configuration::ConfigMessages;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::domaines::GestionnaireDomaine;
 use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
@@ -111,7 +112,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         true
     }
 
-    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), String> where M: MongoDao {
+    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), String> where M: MongoDao + ConfigMessages {
         preparer_index_mongodb_custom(middleware, &self).await
     }
 
@@ -241,7 +242,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
 /// Creer index MongoDB
 pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), String>
-    where M: MongoDao
+    where M: MongoDao + ConfigMessages
 {
     // Index senseurs
     let options_lectures_noeud = IndexOptions {
@@ -252,6 +253,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
     );
     middleware.create_index(
+        middleware,
         gestionnaire.get_collection_senseurs().as_str(),
         champs_index_lectures_noeud,
         Some(options_lectures_noeud)
@@ -265,6 +267,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         ChampIndex {nom_champ: String::from(CHAMP_UUID_SENSEUR), direction: 1},
     );
     middleware.create_index(
+        middleware,
         gestionnaire.get_collection_senseurs().as_str(),
         champs_index_lectures_senseurs,
         Some(options_lectures_senseurs)
@@ -279,6 +282,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
     );
     middleware.create_index(
+        middleware,
         gestionnaire.get_collection_instances().as_str(),
         champs_index_lectures_noeud,
         Some(options_lectures_noeud)
