@@ -37,6 +37,8 @@ const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
 const EVENEMENT_LECTURE: &str = "lecture";
 const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
 
+const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
+
 const TRANSACTION_LECTURE: &str = "lecture";
 const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
 const TRANSACTION_MAJ_NOEUD: &str = "majNoeud";
@@ -49,6 +51,8 @@ const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
 const CHAMP_INSTANCE_ID: &str = "instance_id";
 const CHAMP_UUID_SENSEUR: &str = "uuid_senseur";
 const CHAMP_SENSEURS: &str = "senseurs";
+
+const COLLECTIONS_APPAREILS: &str = "SenseursPassifs/appareils";
 
 #[derive(Clone, Debug)]
 pub struct GestionnaireSenseursPassifs {
@@ -188,9 +192,11 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_MAJ_SENSEUR,
         TRANSACTION_MAJ_NOEUD,
         TRANSACTION_SUPPRESSION_SENSEUR,
+        COMMANDE_INSCRIRE_APPAREIL,
     ];
     for cmd in commandes_transactions {
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, instance_id, cmd), exchange: Securite::L2Prive});
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.*.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
     }
 
     //for sec in securite_prive_prot {
@@ -410,6 +416,7 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
     }?;
 
     match m.action.as_str() {
+        COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR => {
@@ -1185,6 +1192,60 @@ impl TransactionMajNoeud {
             lcd_affichage: None,
         }
     }
+}
+
+async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("commande_inscrire_appareil Consommer requete : {:?}", & m.message);
+    let mut commande: CommandeInscrireAppareil = m.message.get_msg().map_contenu(None)?;
+    debug!("Commande mappee : {:?}", commande);
+
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+    let doc_appareil_option = {
+        let filtre = doc! {"uuid_appareil": &commande.cn};
+        let set_on_insert = doc! {
+            CHAMP_CREATION: Utc::now(),
+            CHAMP_MODIFICATION: Utc::now(),
+            "uuid_appareil": &commande.cn,
+            "cle_publique": &commande.cle_publique,
+            "instance_id": &commande.instance_id,
+            "challenge_complete": false,
+        };
+        let options = FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .build();
+        let ops = doc! { "$setOnInsert": set_on_insert };
+        collection.find_one_and_update(filtre, ops, Some(options)).await?
+    };
+
+    if let Some(d) = doc_appareil_option {
+        let doc_appareil: DocAppareil = convertir_bson_deserializable(d)?;
+        if doc_appareil.certificat.is_none() {
+            debug!("Aucun certificat, faire demande de signature");
+        } else {
+            todo!("Retourner certificat signe");
+        }
+    }
+
+    return Ok(None)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CommandeInscrireAppareil {
+    cn: String,
+    instance_id: String,
+    cle_publique: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct DocAppareil {
+    cn: String,
+    instance_id: String,
+    cle_publique: Option<String>,
+    certificat: Option<Vec<String>>,
 }
 
 // #[cfg(test)]
