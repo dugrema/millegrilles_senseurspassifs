@@ -38,6 +38,7 @@ const EVENEMENT_LECTURE: &str = "lecture";
 const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
 
 const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
+const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
 
 const TRANSACTION_LECTURE: &str = "lecture";
 const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -193,6 +194,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_MAJ_NOEUD,
         TRANSACTION_SUPPRESSION_SENSEUR,
         COMMANDE_INSCRIRE_APPAREIL,
+        COMMANDE_CHALLENGE_APPAREIL,
     ];
     for cmd in commandes_transactions {
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
@@ -417,6 +419,7 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
 
     match m.action.as_str() {
         COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
+        COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR => {
@@ -1205,11 +1208,11 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
     let doc_appareil_option = {
-        let filtre = doc! {"uuid_appareil": &commande.cn};
+        let filtre = doc! {"uuid_appareil": &commande.uuid_appareil};
         let set_on_insert = doc! {
             CHAMP_CREATION: Utc::now(),
             CHAMP_MODIFICATION: Utc::now(),
-            "uuid_appareil": &commande.cn,
+            "uuid_appareil": &commande.uuid_appareil,
             "cle_publique": &commande.cle_publique,
             "instance_id": &commande.instance_id,
             "challenge_complete": false,
@@ -1235,17 +1238,61 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CommandeInscrireAppareil {
-    cn: String,
+    uuid_appareil: String,
     instance_id: String,
     cle_publique: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct DocAppareil {
-    cn: String,
+    uuid_appareil: String,
     instance_id: String,
     cle_publique: Option<String>,
     certificat: Option<Vec<String>>,
+}
+
+async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("commande_challenge_appareil Consommer requete : {:?}", & m.message);
+    let mut commande: CommandeChallengeAppareil = m.message.get_msg().map_contenu(None)?;
+    debug!("commande_challenge_appareil Commande mappee : {:?}", commande);
+
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+    let doc_appareil_option = {
+        let filtre = doc! {"uuid_appareil": &commande.uuid_appareil};
+        collection.find_one(filtre, None).await?
+    };
+
+    let doc_appareil: DocAppareil = match doc_appareil_option {
+        Some(d) => convertir_bson_deserializable(d)?,
+        None => {
+            let reponse = json!({"ok": false, "err": "Appareil inconnu"});
+            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+        }
+    };
+
+    // Emettre la commande de challenge
+    let message_challenge = json!({
+        "uuid_appareil": &commande.uuid_appareil,
+        "challenge": &commande.challenge,
+        "cle_publique": doc_appareil.cle_publique,
+    });
+    let routage = RoutageMessageAction::builder("senseurspassifs_hub", "challengeAppareil")
+        .partition(doc_appareil.instance_id)
+        .exchanges(vec![Securite::L2Prive])
+        .build();
+    middleware.transmettre_commande(routage, &message_challenge, false).await?;
+
+    return Ok(middleware.reponse_ok()?)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CommandeChallengeAppareil {
+    uuid_appareil: String,
+    challenge: Vec<u8>,
 }
 
 // #[cfg(test)]
