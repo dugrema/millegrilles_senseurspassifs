@@ -5,7 +5,7 @@ use std::sync::Arc;
 use log::{debug, error, warn};
 use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::bson::{DateTime, doc, Document};
-use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
+use millegrilles_common_rust::certificats::{calculer_fingerprint, charger_certificat, ValidateurX509, VerificateurPermissions};
 // use millegrilles_common_rust::chiffrage_cle::CommandeSauvegarderCle;
 use millegrilles_common_rust::{chrono, chrono::Utc};
 use millegrilles_common_rust::configuration::ConfigMessages;
@@ -1140,7 +1140,10 @@ struct LectureSenseur {
     timestamp: DateEpochSeconds,
     #[serde(rename="type")]
     type_: String,
-    valeur: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    valeur: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    valeur_str: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1241,7 +1244,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
                             "cle_publique": &commande.cle_publique,
                             "csr": &commande.csr,
                         },
-                        "$unset": {"certificat": true},
+                        "$unset": {"certificat": true, "fingerprint": true},
                         "$currentDate": {CHAMP_MODIFICATION: true},
                     };
                     collection.update_one(filtre_appareil.clone(), ops, None).await?;
@@ -1255,7 +1258,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
                 .exchanges(vec![Securite::L3Protege])
                 .build();
             let requete = json!({
-                "csr": &doc_appareil.csr,
+                "csr": &commande.csr,  // &doc_appareil.csr,
                 "roles": ["senseurspassifs"],
             });
             debug!("Requete demande signer appareil : {:?}", requete);
@@ -1274,8 +1277,23 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
             };
             debug!("Reponse : {:?}", reponse);
             if let Some(true) = reponse.ok {
+
+                let fingerprint = match &reponse.certificat {
+                    Some(c) => {
+                        let cert_x509 = charger_certificat(c[0].as_str());
+                        calculer_fingerprint(&cert_x509)?
+                    },
+                    None => {
+                        let reponse = json!({"ok": false, "err": "Reponse serveur incorrect (cert)"});
+                        return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                    }
+                };
+
                 let ops = doc! {
-                    "$set": {"certificat": &reponse.certificat},
+                    "$set": {
+                        "certificat": &reponse.certificat,
+                        "fingerprint": fingerprint,
+                    },
                     "$unset": {"csr": true},
                     "$currentDate": {CHAMP_MODIFICATION: true},
                 };
@@ -1321,6 +1339,7 @@ struct DocAppareil {
     cle_publique: Option<String>,
     csr: Option<String>,
     certificat: Option<Vec<String>>,
+    fingerprint: Option<String>,
 }
 
 async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -1351,6 +1370,7 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
         "uuid_appareil": &commande.uuid_appareil,
         "challenge": &commande.challenge,
         "cle_publique": doc_appareil.cle_publique,
+        "fingerprint": doc_appareil.fingerprint,
     });
     let routage = RoutageMessageAction::builder("senseurspassifs_hub", "challengeAppareil")
         .partition(doc_appareil.instance_id)
