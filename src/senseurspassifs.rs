@@ -1206,8 +1206,8 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
     debug!("Commande mappee : {:?}", commande);
 
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-
     let filtre_appareil = doc! {"uuid_appareil": &commande.uuid_appareil};
+
     let doc_appareil_option = {
         let set_on_insert = doc! {
             CHAMP_CREATION: Utc::now(),
@@ -1227,10 +1227,29 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
     };
 
     if let Some(d) = doc_appareil_option {
-        let mut certificat = None;
-
         let doc_appareil: DocAppareil = convertir_bson_deserializable(d)?;
-        if doc_appareil.certificat.is_none() {
+        let mut certificat = doc_appareil.certificat;
+
+        if certificat.is_some() {
+            // Comparer cles publiques - si differentes, on genere un nouveau certificat
+            if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
+                if &commande.cle_publique != cle_publique_db {
+                    debug!("Reset certificat, demande avec nouveau CSR");
+                    certificat = None;
+                    let ops = doc! {
+                        "$set": {
+                            "cle_publique": &commande.cle_publique,
+                            "csr": &commande.csr,
+                        },
+                        "$unset": {"certificat": true},
+                        "$currentDate": {CHAMP_MODIFICATION: true},
+                    };
+                    collection.update_one(filtre_appareil.clone(), ops, None).await?;
+                }
+            }
+        }
+
+        if certificat.is_none() {
             debug!("Aucun certificat, faire demande de signature");
             let routage = RoutageMessageAction::builder("CorePki", "signerCsr")
                 .exchanges(vec![Securite::L3Protege])
@@ -1263,8 +1282,6 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
                 collection.update_one(filtre_appareil, ops, None).await?;
                 certificat = reponse.certificat;
             }
-        } else {
-            certificat = doc_appareil.certificat;
         }
 
         if let Some(c) = certificat {
@@ -1272,6 +1289,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
             let reponse = json!({
                 "ok": true,
                 "certificat": c,
+                "challenge": [2],
             });
             return Ok(Some(middleware.formatter_reponse(reponse, None)?));
         }
