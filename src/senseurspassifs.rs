@@ -18,7 +18,7 @@ use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{Middleware, sauvegarder_traiter_transaction};
 use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneAndUpdateOptions, FindOneOptions, FindOptions, Hint, ReturnDocument, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
-use millegrilles_common_rust::recepteur_messages::MessageValideAction;
+use millegrilles_common_rust::recepteur_messages::{MessageValideAction, TypeMessage};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::serde_json::{json, Value};
 use millegrilles_common_rust::tokio::time::{Duration, sleep};
@@ -1207,33 +1207,85 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
 
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
+    let filtre_appareil = doc! {"uuid_appareil": &commande.uuid_appareil};
     let doc_appareil_option = {
-        let filtre = doc! {"uuid_appareil": &commande.uuid_appareil};
         let set_on_insert = doc! {
             CHAMP_CREATION: Utc::now(),
             CHAMP_MODIFICATION: Utc::now(),
             "uuid_appareil": &commande.uuid_appareil,
             "cle_publique": &commande.cle_publique,
+            "csr": &commande.csr,
             "instance_id": &commande.instance_id,
             "challenge_complete": false,
         };
         let options = FindOneAndUpdateOptions::builder()
             .upsert(true)
+            .return_document(ReturnDocument::After)
             .build();
         let ops = doc! { "$setOnInsert": set_on_insert };
-        collection.find_one_and_update(filtre, ops, Some(options)).await?
+        collection.find_one_and_update(filtre_appareil.clone(), ops, Some(options)).await?
     };
 
     if let Some(d) = doc_appareil_option {
+        let mut certificat = None;
+
         let doc_appareil: DocAppareil = convertir_bson_deserializable(d)?;
         if doc_appareil.certificat.is_none() {
             debug!("Aucun certificat, faire demande de signature");
+            let routage = RoutageMessageAction::builder("CorePki", "signerCsr")
+                .exchanges(vec![Securite::L3Protege])
+                .build();
+            let requete = json!({
+                "csr": &doc_appareil.csr,
+                "roles": ["senseurspassifs"],
+            });
+            debug!("Requete demande signer appareil : {:?}", requete);
+            let reponse: ReponseCertificat = match middleware.transmettre_commande(routage, &requete, true).await? {
+                Some(r) => match r {
+                    TypeMessage::Valide(m) => m.message.parsed.map_contenu(None)?,
+                    _ => {
+                        let reponse = json!({"ok": false, "err": "Reponse certissuer invalide"});
+                        return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                    }
+                },
+                None => {
+                    let reponse = json!({"ok": false, "err": "Aucune reponse"});
+                    return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                }
+            };
+            debug!("Reponse : {:?}", reponse);
+            if let Some(true) = reponse.ok {
+                let ops = doc! {
+                    "$set": {"certificat": &reponse.certificat},
+                    "$unset": {"csr": true},
+                    "$currentDate": {CHAMP_MODIFICATION: true},
+                };
+                collection.update_one(filtre_appareil, ops, None).await?;
+                certificat = reponse.certificat;
+            }
         } else {
-            todo!("Retourner certificat signe");
+            certificat = doc_appareil.certificat;
         }
+
+        if let Some(c) = certificat {
+            debug!("Repondre avec certificat");
+            let reponse = json!({
+                "ok": true,
+                "certificat": c,
+            });
+            return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+        }
+    } else {
+        todo!("Aucun doc?");
     }
 
     return Ok(None)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ReponseCertificat {
+    ok: Option<bool>,
+    certificat: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1241,6 +1293,7 @@ struct CommandeInscrireAppareil {
     uuid_appareil: String,
     instance_id: String,
     cle_publique: String,
+    csr: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1248,6 +1301,7 @@ struct DocAppareil {
     uuid_appareil: String,
     instance_id: String,
     cle_publique: Option<String>,
+    csr: Option<String>,
     certificat: Option<Vec<String>>,
 }
 
