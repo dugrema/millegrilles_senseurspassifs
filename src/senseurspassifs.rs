@@ -28,6 +28,7 @@ use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson, convertir_bson_value, filtrer_doc_id};
 
 pub const DOMAINE_NOM: &str = "SenseursPassifs";
+pub const ROLE_RELAI_NOM: &str = "senseurspassifs_relai";
 
 const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
 const REQUETE_GET_NOEUD: &str = "getNoeud";
@@ -181,10 +182,10 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         EVENEMENT_LECTURE,
     ];
     for evnt in evenements {
-        //for sec in &securite_prive_prot {
-            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive });
-            rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, instance_id, evnt), exchange: Securite::L2Prive });
-        //}
+        rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive });
+        rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, instance_id, evnt), exchange: Securite::L2Prive });
+        rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, evnt), exchange: Securite::L2Prive });
+        rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", ROLE_RELAI_NOM, instance_id, evnt), exchange: Securite::L2Prive });
     }
 
     let commandes_transactions: Vec<&str> = vec![
