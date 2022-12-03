@@ -40,6 +40,7 @@ const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
 
 const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
+const COMMANDE_SIGNER_APPAREIL: &str = "signerAppareil";
 
 const TRANSACTION_LECTURE: &str = "lecture";
 const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -54,28 +55,14 @@ const CHAMP_INSTANCE_ID: &str = "instance_id";
 const CHAMP_UUID_SENSEUR: &str = "uuid_senseur";
 const CHAMP_SENSEURS: &str = "senseurs";
 
+const COLLECTIONS_NOM: &str = "SenseursPassifs";
+const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";
+const COLLECTIONS_LECTURES: &str = "SenseursPassifs/lectures";
 const COLLECTIONS_APPAREILS: &str = "SenseursPassifs/appareils";
 
 #[derive(Clone, Debug)]
 pub struct GestionnaireSenseursPassifs {
     pub instance_id: String,
-}
-
-impl GestionnaireSenseursPassifs {
-    fn get_collection_senseurs(&self) -> String {
-        let instance_id_tronque = self.get_instance_id_tronque();
-        format!("SenseursPassifs/{}/senseurs", instance_id_tronque)
-    }
-
-    fn get_collection_instances(&self) -> String {
-        let instance_id_tronque = self.get_instance_id_tronque();
-        format!("SenseursPassifs/{}/instances", instance_id_tronque)
-    }
-
-    /// Noeud id hache sur 12 characteres pour noms d'index, tables
-    fn get_instance_id_tronque(&self) -> String {
-        hacher_uuid(self.instance_id.as_str(), Some(12)).expect("hachage")
-    }
 }
 
 #[async_trait]
@@ -92,24 +79,25 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     fn get_nom_domaine(&self) -> String { String::from(DOMAINE_NOM) }
 
     fn get_collection_transactions(&self) -> Option<String> {
-        let instance_id_tronque = self.get_instance_id_tronque();
-        Some(format!("SenseursPassifs/{}", instance_id_tronque))
+        Some(COLLECTIONS_NOM.to_string())
     }
 
     fn get_collections_documents(&self) -> Vec<String> { vec![
-        self.get_collection_senseurs()
+        COLLECTIONS_INSTANCES.to_string(),
+        COLLECTIONS_LECTURES.to_string(),
+        COLLECTIONS_APPAREILS.to_string(),
     ] }
 
     fn get_q_transactions(&self) -> Option<String> {
-        Some(format!("{}/{}/transactions", DOMAINE_NOM, self.instance_id))
+        Some(format!("{}/transactions", DOMAINE_NOM))
     }
 
     fn get_q_volatils(&self) -> Option<String> {
-        Some(format!("{}/{}/volatils", DOMAINE_NOM, self.instance_id))
+        Some(format!("{}/volatils", DOMAINE_NOM))
     }
 
     fn get_q_triggers(&self) -> Option<String> {
-        Some(format!("{}/{}/triggers", DOMAINE_NOM, self.instance_id))
+        Some(format!("{}/triggers", DOMAINE_NOM))
     }
 
     fn preparer_queues(&self) -> Vec<QueueType> { preparer_queues(self) }
@@ -196,6 +184,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_SUPPRESSION_SENSEUR,
         COMMANDE_INSCRIRE_APPAREIL,
         COMMANDE_CHALLENGE_APPAREIL,
+        COMMANDE_SIGNER_APPAREIL,
     ];
     for cmd in commandes_transactions {
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
@@ -263,7 +252,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
     );
     middleware.create_index(
         middleware,
-        gestionnaire.get_collection_senseurs().as_str(),
+        COLLECTIONS_LECTURES,
         champs_index_lectures_noeud,
         Some(options_lectures_noeud)
     ).await?;
@@ -277,7 +266,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
     );
     middleware.create_index(
         middleware,
-        gestionnaire.get_collection_senseurs().as_str(),
+        COLLECTIONS_LECTURES,
         champs_index_lectures_senseurs,
         Some(options_lectures_senseurs)
     ).await?;
@@ -292,7 +281,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
     );
     middleware.create_index(
         middleware,
-        gestionnaire.get_collection_instances().as_str(),
+        COLLECTIONS_INSTANCES,
         champs_index_lectures_noeud,
         Some(options_lectures_noeud)
     ).await?;
@@ -421,6 +410,7 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
     match m.action.as_str() {
         COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
         COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire).await,
+        COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR => {
@@ -518,7 +508,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
         Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur conversion transaction : {:?}", e))?
     };
     debug!("transaction_maj_senseur Transaction lue {:?}", transaction_cle);
-    let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+    let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
 
     let document_transaction = {
         let mut set_ops = doc! {CHAMP_INSTANCE_ID: &transaction_cle.instance_id};
@@ -565,7 +555,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
         let opts = UpdateOptions::builder().upsert(true).build();
-        let collection_noeud = match middleware.get_collection(gestionnaire.get_collection_instances().as_str()) {
+        let collection_noeud = match middleware.get_collection(COLLECTIONS_INSTANCES) {
             Ok(n) => n,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur ouverture collection noeuds: {:?}", e))?
         };
@@ -635,7 +625,7 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
         }
 
         let filtre = doc! { CHAMP_INSTANCE_ID: &contenu_transaction.instance_id };
-        let collection = middleware.get_collection(&gestionnaire.get_collection_instances())?;
+        let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
         let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
         match collection.find_one_and_update(filtre, ops, Some(opts)).await {
             Ok(r) => {
@@ -684,7 +674,7 @@ async fn transaction_suppression_senseur<M, T>(middleware: &M, transaction: T, g
 
     {
         let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
-        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
         let resultat = match collection.delete_one(filtre, None).await {
             Ok(r) => r,
             Err(e) => Err(format!("senseurspassifs.transaction_suppression_senseur Erreur traitement transaction senseur : {:?}", e))?
@@ -723,7 +713,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
                 "derniere_lecture": &plus_recente_lecture.timestamp,
             };
             let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
-            let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+            let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
             let ops = doc! {
                 "$set": {
                     format!("{}.{}", CHAMP_SENSEURS, &contenu_transaction.senseur): senseur,
@@ -844,7 +834,7 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
             "lcd_actif": 1, "lcd_vpin_onoff": 1, "lcd_vpin_navigation": 1, "lcd_affichage": 1,
         };
         let opts = FindOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(&gestionnaire.get_collection_instances())?;
+        let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
         let mut curseur = collection.find(filtre, opts).await?;
 
         let mut noeuds = Vec::new();
@@ -879,7 +869,7 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
             "descriptif": 1,
         };
         let opts = FindOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
         let mut curseur = collection.find(filtre, opts).await?;
 
         let mut senseurs = Vec::new();
@@ -920,7 +910,7 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
             "descriptif": 1,
         };
         let opts = FindOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
         let mut curseur = collection.find(filtre, opts).await?;
 
         let mut senseurs = Vec::new();
@@ -962,7 +952,7 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
         };
         let filtre = doc! { CHAMP_INSTANCE_ID: &requete.instance_id };
         let opts = FindOneOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(&gestionnaire.get_collection_instances())?;
+        let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
         let mut doc = collection.find_one(filtre, opts).await?;
 
         match doc {
@@ -1056,7 +1046,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         },
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
-    let collection = middleware.get_collection(gestionnaire.get_collection_senseurs().as_str())?;
+    let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
     let opts = UpdateOptions::builder().upsert(true).build();
     let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
@@ -1084,7 +1074,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
         };
         let filtre = doc! { CHAMP_UUID_SENSEUR: &lecture.uuid_senseur };
         let opts = FindOneOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(&gestionnaire.get_collection_senseurs())?;
+        let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
         let doc_senseur = collection.find_one(filtre, opts).await?;
 
         match doc_senseur {
@@ -1207,10 +1197,13 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
 {
     debug!("commande_inscrire_appareil Consommer requete : {:?}", & m.message);
     let mut commande: CommandeInscrireAppareil = m.message.get_msg().map_contenu(None)?;
-    debug!("Commande mappee : {:?}", commande);
+    debug!("commande_inscrire_appareil Commande mappee : {:?}", commande);
 
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    let filtre_appareil = doc! {"uuid_appareil": &commande.uuid_appareil};
+    let filtre_appareil = doc! {
+        "uuid_appareil": &commande.uuid_appareil,
+        "user_id": &commande.user_id,
+    };
 
     let doc_appareil_option = {
         let set_on_insert = doc! {
@@ -1220,6 +1213,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
             "cle_publique": &commande.cle_publique,
             "csr": &commande.csr,
             "instance_id": &commande.instance_id,
+            "user_id": &commande.user_id,
             "challenge_complete": false,
         };
         let options = FindOneAndUpdateOptions::builder()
@@ -1234,33 +1228,106 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
         let doc_appareil: DocAppareil = convertir_bson_deserializable(d)?;
         let mut certificat = doc_appareil.certificat;
 
-        if certificat.is_some() {
-            // Comparer cles publiques - si differentes, on genere un nouveau certificat
-            if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
-                if &commande.cle_publique != cle_publique_db {
-                    debug!("Reset certificat, demande avec nouveau CSR");
-                    certificat = None;
-                    let ops = doc! {
-                        "$set": {
-                            "cle_publique": &commande.cle_publique,
-                            "csr": &commande.csr,
-                        },
-                        "$unset": {"certificat": true, "fingerprint": true},
-                        "$currentDate": {CHAMP_MODIFICATION: true},
-                    };
-                    collection.update_one(filtre_appareil.clone(), ops, None).await?;
+
+        match certificat {
+            Some(c) => {
+                let mut repondre_certificat = false;
+
+                // Comparer cles publiques - si differentes, on genere un nouveau certificat
+                if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
+                    if &commande.cle_publique != cle_publique_db {
+                        debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
+                        certificat = None;
+                        let ops = doc! {
+                            "$set": {
+                                "cle_publique": &commande.cle_publique,
+                                "csr": &commande.csr,
+                            },
+                            "$unset": {"certificat": true, "fingerprint": true},
+                            "$currentDate": {CHAMP_MODIFICATION: true},
+                        };
+                        collection.update_one(filtre_appareil.clone(), ops, None).await?;
+                    } else {
+                        repondre_certificat = true;
+                    }
+                } else {
+                    repondre_certificat = true;
                 }
+
+                if repondre_certificat {
+                    debug!("Repondre avec le certificat");
+                    let reponse = json!({"ok": true, "certificat": c});
+                    return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+                }
+            },
+            None => {
+                // Rien a faire, on a conserve le certificat
             }
         }
 
-        if certificat.is_none() {
-            debug!("Aucun certificat, faire demande de signature");
+    } else {
+        error!("commande_inscrire_appareil Erreur db - document pas insere");
+    }
+
+    let reponse = json!({"ok": true});
+    return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+}
+
+async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("commande_signer_appareil Consommer requete : {:?}", & m.message);
+    let mut commande: CommandeSignerAppareil = m.message.get_msg().map_contenu(None)?;
+    debug!("commande_signer_appareil Commande mappee : {:?}", commande);
+
+    let user_id = match m.get_user_id() {
+        Some(inner) => inner,
+        None => {
+            let reponse = json!({"ok": false, "err": "user_id manquant"});
+            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+        }
+    };
+
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+    let filtre_appareil = doc! {
+        "uuid_appareil": &commande.uuid_appareil,
+        "user_id": &user_id,
+    };
+
+    let mut doc_appareil = {
+        let d = collection.find_one(filtre_appareil.clone(), None).await?;
+        match d {
+            Some(d) => {
+                let doc_appareil: DocAppareil = convertir_bson_deserializable(d)?;
+                doc_appareil
+            },
+            None => {
+                let reponse = json!({"ok": false, "err": "appareil inconnu"});
+                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            }
+        }
+    };
+
+    let certificat = match doc_appareil.certificat {
+        Some(c) => c,
+        None => {
+            let csr = match doc_appareil.csr {
+                Some(c) => c,
+                None => {
+                    let reponse = json!({"ok": false, "err": "csr absent"});
+                    return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                }
+            };
+            debug!("commande_signer_appareil Aucun certificat, faire demande de signature");
             let routage = RoutageMessageAction::builder("CorePki", "signerCsr")
                 .exchanges(vec![Securite::L3Protege])
                 .build();
             let requete = json!({
-                "csr": &commande.csr,  // &doc_appareil.csr,
+                "csr": csr,  // &doc_appareil.csr,
                 "roles": ["senseurspassifs"],
+                "user_id": user_id,
             });
             debug!("Requete demande signer appareil : {:?}", requete);
             let reponse: ReponseCertificat = match middleware.transmettre_commande(routage, &requete, true).await? {
@@ -1276,13 +1343,14 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
                     return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
                 }
             };
+
             debug!("Reponse : {:?}", reponse);
             if let Some(true) = reponse.ok {
 
-                let fingerprint = match &reponse.certificat {
+                let (certificat, fingerprint) = match &reponse.certificat {
                     Some(c) => {
                         let cert_x509 = charger_certificat(c[0].as_str());
-                        calculer_fingerprint(&cert_x509)?
+                        (c.to_owned(), calculer_fingerprint(&cert_x509)?)
                     },
                     None => {
                         let reponse = json!({"ok": false, "err": "Reponse serveur incorrect (cert)"});
@@ -1299,24 +1367,22 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
                     "$currentDate": {CHAMP_MODIFICATION: true},
                 };
                 collection.update_one(filtre_appareil, ops, None).await?;
-                certificat = reponse.certificat;
+
+                certificat  // Retourner certificat via reponse
+            } else {
+                let reponse = json!({"ok": false, "err": "Reponse serveur incorrect (ok=false)"});
+                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
             }
         }
+    };
 
-        if let Some(c) = certificat {
-            debug!("Repondre avec certificat");
-            let reponse = json!({
-                "ok": true,
-                "certificat": c,
-                "challenge": [2],
-            });
-            return Ok(Some(middleware.formatter_reponse(reponse, None)?));
-        }
-    } else {
-        todo!("Aucun doc?");
-    }
+    debug!("Repondre avec certificat");
+    let reponse = json!({
+        "ok": true,
+        "certificat": certificat,
+    });
 
-    return Ok(None)
+    Ok(Some(middleware.formatter_reponse(reponse, None)?))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1329,8 +1395,14 @@ struct ReponseCertificat {
 struct CommandeInscrireAppareil {
     uuid_appareil: String,
     instance_id: String,
+    user_id: String,
     cle_publique: String,
     csr: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CommandeSignerAppareil {
+    uuid_appareil: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1351,10 +1423,18 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
     let mut commande: CommandeChallengeAppareil = m.message.get_msg().map_contenu(None)?;
     debug!("commande_challenge_appareil Commande mappee : {:?}", commande);
 
+    let user_id = match m.get_user_id() {
+        Some(inner) => inner,
+        None => {
+            let reponse = json!({"ok": false, "err": "user_id manquant"});
+            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+        }
+    };
+
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
     let doc_appareil_option = {
-        let filtre = doc! {"uuid_appareil": &commande.uuid_appareil};
+        let filtre = doc! {"uuid_appareil": &commande.uuid_appareil, "user_id": user_id};
         collection.find_one(filtre, None).await?
     };
 
@@ -1368,12 +1448,13 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
 
     // Emettre la commande de challenge
     let message_challenge = json!({
+        "ok": true,
         "uuid_appareil": &commande.uuid_appareil,
         "challenge": &commande.challenge,
         "cle_publique": doc_appareil.cle_publique,
         "fingerprint": doc_appareil.fingerprint,
     });
-    let routage = RoutageMessageAction::builder("senseurspassifs_hub", "challengeAppareil")
+    let routage = RoutageMessageAction::builder("senseurspassifs_relai", "challengeAppareil")
         .partition(doc_appareil.instance_id)
         .exchanges(vec![Securite::L2Prive])
         .build();
