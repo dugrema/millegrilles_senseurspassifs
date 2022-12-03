@@ -54,6 +54,7 @@ const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
 const CHAMP_INSTANCE_ID: &str = "instance_id";
 const CHAMP_UUID_SENSEUR: &str = "uuid_senseur";
 const CHAMP_SENSEURS: &str = "senseurs";
+const CHAMP_USER_ID: &str = "user_id";
 
 const COLLECTIONS_NOM: &str = "SenseursPassifs";
 const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";
@@ -257,11 +258,27 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         Some(options_lectures_noeud)
     ).await?;
 
+    let options_appareils = IndexOptions {
+        nom_index: Some(String::from(INDEX_LECTURES_SENSEURS)),
+        unique: true
+    };
+    let champs_index_appareils = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_UUID_SENSEUR), direction: 1},
+    );
+    middleware.create_index(
+        middleware,
+        COLLECTIONS_APPAREILS,
+        champs_index_appareils,
+        Some(options_appareils)
+    ).await?;
+
     let options_lectures_senseurs = IndexOptions {
         nom_index: Some(String::from(INDEX_LECTURES_SENSEURS)),
         unique: true
     };
     let champs_index_lectures_senseurs = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
         ChampIndex {nom_champ: String::from(CHAMP_UUID_SENSEUR), direction: 1},
     );
     middleware.create_index(
@@ -508,6 +525,15 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
         Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur conversion transaction : {:?}", e))?
     };
     debug!("transaction_maj_senseur Transaction lue {:?}", transaction_cle);
+
+    let user_id = match transaction.get_enveloppe_certificat() {
+        Some(inner) => match inner.get_user_id()? {
+            Some(user) => user.to_owned(),
+            None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur user_id absent du certificat"))?
+        },
+        None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur certificat absent"))?
+    };
+
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
 
     let document_transaction = {
@@ -526,10 +552,11 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
                 CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur,
+                CHAMP_USER_ID: &user_id,
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
-        let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur };
+        let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur, CHAMP_USER_ID: &user_id };
         let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
         match collection.find_one_and_update(filtre, ops, Some(opts)).await {
             Ok(r) => match r {
@@ -711,6 +738,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
             let filtre = doc! {
                 CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur,
                 "derniere_lecture": &plus_recente_lecture.timestamp,
+                "user_id": &contenu_transaction.user_id,
             };
             let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
             let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
@@ -724,6 +752,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
                     CHAMP_CREATION: Utc::now(),
                     CHAMP_INSTANCE_ID: &contenu_transaction.instance_id,
                     CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur,
+                    "user_id": &contenu_transaction.user_id,
                 },
                 "$currentDate": { CHAMP_MODIFICATION: true },
             };
@@ -737,7 +766,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
             if let Some(_) = resultat.upserted_id {
                 debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
                 let transaction = TransactionMajSenseur::new(
-                    &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
+                    &contenu_transaction.uuid_senseur, &contenu_transaction.user_id, &contenu_transaction.instance_id);
                 let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
                     .exchanges(vec![Securite::L4Secure])
                     .partition(&gestionnaire.instance_id)
@@ -768,6 +797,9 @@ struct TransactionLectures {
 
     /// UUID du noeud MilleGrille
     instance_id: String,
+
+    //// User id (compte)
+    user_id: String,
 
     /// Type de lecture, e.g. temperature, humidite, pression, voltage, batterie, etc.
     #[serde(rename="type")]
@@ -1010,7 +1042,10 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     // Trouver date de la plus recente lecture
     lecture.calculer_derniere_lecture();
 
-    let mut filtre = doc! { CHAMP_UUID_SENSEUR: &lecture.uuid_senseur };
+    let mut filtre = doc! {
+        CHAMP_UUID_SENSEUR: &lecture.uuid_senseur,
+        "user_id": lecture.user_id.as_str(),
+    };
 
     // Convertir date en format DateTime pour conserver, ajouter filtre pour eviter de
     // mettre a jour un senseur avec informations plus vieilles
@@ -1043,6 +1078,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
             CHAMP_CREATION: Utc::now(),
             CHAMP_INSTANCE_ID: &lecture.instance_id,
             CHAMP_UUID_SENSEUR: &lecture.uuid_senseur,
+            "user_id": lecture.user_id.as_str(),
         },
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
@@ -1054,7 +1090,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     // Si on a cree un nouvel element, creer le senseur (et potentiellement le noeud)
     if let Some(uid) = resultat_update.upserted_id {
         debug!("Creation nouvelle transaction pour senseur {}", lecture.uuid_senseur);
-        let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.instance_id);
+        let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.user_id, &lecture.instance_id);
         let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
             .exchanges(vec![Securite::L4Secure])
             .partition(&gestionnaire.instance_id)
@@ -1104,6 +1140,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
 struct EvenementLecture {
     instance_id: String,
     uuid_senseur: String,
+    user_id: String,
     senseurs: HashMap<String, LectureSenseur>,
     derniere_lecture: Option<DateEpochSeconds>,
 }
@@ -1146,8 +1183,8 @@ struct TransactionMajSenseur {
 }
 
 impl TransactionMajSenseur {
-    pub fn new<S, T>(uuid_senseur: S, uuid_noeud: T)  -> Self
-        where S: Into<String>, T: Into<String>
+    pub fn new<S, T, U>(uuid_senseur: S, user_id: T, uuid_noeud: U)  -> Self
+        where S: Into<String>, T: Into<String>, U: Into<String>
     {
         TransactionMajSenseur {
             uuid_senseur: uuid_senseur.into(),
@@ -1214,7 +1251,6 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
             "csr": &commande.csr,
             "instance_id": &commande.instance_id,
             "user_id": &commande.user_id,
-            "challenge_complete": false,
         };
         let options = FindOneAndUpdateOptions::builder()
             .upsert(true)
