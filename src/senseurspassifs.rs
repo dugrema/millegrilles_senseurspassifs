@@ -11,7 +11,7 @@ use millegrilles_common_rust::{chrono, chrono::Utc};
 use millegrilles_common_rust::configuration::ConfigMessages;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::domaines::GestionnaireDomaine;
-use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
+use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
@@ -34,6 +34,7 @@ const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
 const REQUETE_GET_NOEUD: &str = "getNoeud";
 const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
 const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
+const REQUETE_GET_APPAREILS_EN_ATTENTE: &str = "getAppareilsEnAttente";
 
 const EVENEMENT_LECTURE: &str = "lecture";
 const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
@@ -49,10 +50,12 @@ const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
 
 const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
 const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
+const INDEX_USER_APPAREILS: &str = "user_appareils";
 
 //const CHAMP_INSTANCE_ID: &str = "instance_id";
 const CHAMP_INSTANCE_ID: &str = "instance_id";
 const CHAMP_UUID_SENSEUR: &str = "uuid_senseur";
+const CHAMP_UUID_APPAREIL: &str = "uuid_appareil";
 const CHAMP_SENSEURS: &str = "senseurs";
 const CHAMP_USER_ID: &str = "user_id";
 
@@ -154,10 +157,11 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         REQUETE_GET_NOEUD,
         REQUETE_LISTE_SENSEURS_PAR_UUID,
         REQUETE_LISTE_SENSEURS_NOEUD,
+        REQUETE_GET_APPAREILS_EN_ATTENTE,
     ];
     for req in requetes_privees {
         // for sec in &securite_prive_prot {
-            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}.{}", DOMAINE_NOM, instance_id, req), exchange: Securite::L2Prive});
+            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, req), exchange: Securite::L2Prive});
         // }
     }
 
@@ -172,9 +176,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ];
     for evnt in evenements {
         rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive });
-        rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", DOMAINE_NOM, instance_id, evnt), exchange: Securite::L2Prive });
         rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, evnt), exchange: Securite::L2Prive });
-        rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}.{}", ROLE_RELAI_NOM, instance_id, evnt), exchange: Securite::L2Prive });
     }
 
     let commandes_transactions: Vec<&str> = vec![
@@ -189,7 +191,6 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     ];
     for cmd in commandes_transactions {
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.*.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
     }
 
     //for sec in securite_prive_prot {
@@ -217,7 +218,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     let transactions_sec = vec![TRANSACTION_LECTURE, TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
-            routing_key: format!("transaction.{}.{}.{}", DOMAINE_NOM, gestionnaire.instance_id.as_str(), trans).into(),
+            routing_key: format!("transaction.{}.{}", DOMAINE_NOM, trans).into(),
             exchange: Securite::L4Secure,
         });
     }
@@ -233,8 +234,8 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         }
     ));
 
-    // Queue de triggers pour Pki
-    queues.push(QueueType::Triggers (format!("{}.{}", DOMAINE_NOM, gestionnaire.instance_id), Securite::L3Protege));
+    // Queue de triggers
+    queues.push(QueueType::Triggers (format!("{}", DOMAINE_NOM), Securite::L3Protege));
 
     queues
 }
@@ -259,12 +260,12 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
     ).await?;
 
     let options_appareils = IndexOptions {
-        nom_index: Some(String::from(INDEX_LECTURES_SENSEURS)),
+        nom_index: Some(String::from(INDEX_USER_APPAREILS)),
         unique: true
     };
     let champs_index_appareils = vec!(
         ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
-        ChampIndex {nom_champ: String::from(CHAMP_UUID_SENSEUR), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_UUID_APPAREIL), direction: 1},
     );
     middleware.create_index(
         middleware,
@@ -347,6 +348,7 @@ async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gest
                 REQUETE_LISTE_SENSEURS_PAR_UUID => requete_liste_senseurs_par_uuid(middleware, message, gestionnaire).await,
                 REQUETE_LISTE_SENSEURS_NOEUD => requete_liste_senseurs_pour_noeud(middleware, message, gestionnaire).await,
                 REQUETE_GET_NOEUD => requete_get_noeud(middleware, message, gestionnaire).await,
+                REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
                 _ => {
                     error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                     Ok(None)
@@ -362,7 +364,7 @@ async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gest
 
 async fn consommer_evenement<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao,
+    M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao,
 {
     debug!("senseurspassifs.consommer_evenement Consommer evenement : {:?}", &m.message);
 
@@ -596,7 +598,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
             let transaction = TransactionMajNoeud::new(&transaction_cle.instance_id);
             let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
                 .exchanges(vec![Securite::L4Secure])
-                .partition(&gestionnaire.instance_id)
+                // .partition(&gestionnaire.instance_id)
                 .build();
             middleware.soumettre_transaction(routage, &transaction, false).await?;
         }
@@ -605,7 +607,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
     {
         let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
             .exchanges(vec![Securite::L2Prive])
-            .partition(&document_transaction.instance_id)
+            // .partition(&document_transaction.instance_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
     }
@@ -674,7 +676,7 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
     {
         let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
             .exchanges(vec![Securite::L2Prive])
-            .partition(&document_transaction.instance_id)
+            // .partition(&document_transaction.instance_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
     }
@@ -769,7 +771,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
                     &contenu_transaction.uuid_senseur, &contenu_transaction.user_id, &contenu_transaction.instance_id);
                 let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
                     .exchanges(vec![Securite::L4Secure])
-                    .partition(&gestionnaire.instance_id)
+                    // .partition(&gestionnaire.instance_id)
                     .build();
                 middleware.soumettre_transaction(routage, &transaction, false).await?;
             }
@@ -863,7 +865,6 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
             "securite": 1,
             CHAMP_MODIFICATION: 1,
             "descriptif": 1,
-            "lcd_actif": 1, "lcd_vpin_onoff": 1, "lcd_vpin_navigation": 1, "lcd_affichage": 1,
         };
         let opts = FindOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
@@ -878,7 +879,7 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
         noeuds
     };
 
-    let reponse = json!({ "ok": true, "noeuds": noeuds, "partition": &gestionnaire.instance_id });
+    let reponse = json!({ "ok": true, "instances": noeuds, "instance_id": &gestionnaire.instance_id });
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
@@ -906,14 +907,14 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
 
         let mut senseurs = Vec::new();
         while let Some(d) = curseur.next().await {
-            let mut noeud: InformationSenseur = convertir_bson_deserializable(d?)?;
+            let mut noeud: InformationAppareil = convertir_bson_deserializable(d?)?;
             senseurs.push(noeud);
         }
 
         senseurs
     };
 
-    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.instance_id });
+    let reponse = json!({ "ok": true, "senseurs": senseurs, "instance_id": &gestionnaire.instance_id });
     let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
     debug!("Reponse formattee : {:?}", reponse_formattee);
     Ok(Some(reponse_formattee))
@@ -948,14 +949,14 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
         let mut senseurs = Vec::new();
         while let Some(d) = curseur.next().await {
             debug!("Document senseur bson : {:?}", d);
-            let mut noeud: InformationSenseur = convertir_bson_deserializable(d?)?;
+            let mut noeud: InformationAppareil = convertir_bson_deserializable(d?)?;
             senseurs.push(noeud);
         }
 
         senseurs
     };
 
-    let reponse = json!({ "ok": true, "senseurs": senseurs, "partition": &gestionnaire.instance_id });
+    let reponse = json!({ "ok": true, "senseurs": senseurs, "instance_id": &gestionnaire.instance_id });
     let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
     debug!("Reponse formattee : {:?}", reponse_formattee);
     Ok(Some(reponse_formattee))
@@ -1001,13 +1002,13 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
             // Inserer valeurs manquantes pour la response
             if let Some(mut o) = val_noeud.as_object_mut() {
                 o.insert("ok".into(), Value::Bool(true));
-                o.insert("partition".into(), Value::String(gestionnaire.instance_id.clone()));
+                o.insert("instance_id".into(), Value::String(gestionnaire.instance_id.clone()));
             }
             val_noeud
         },
         None => {
             // Confirmer que la requete s'est bien executee mais rien trouve
-            json!({ "ok": true, "partition": &gestionnaire.instance_id, CHAMP_INSTANCE_ID: None::<&str>})
+            json!({ "ok": true, "instance_id": &gestionnaire.instance_id})
         }
     };
 
@@ -1021,111 +1022,169 @@ struct RequeteGetNoeud {
     instance_id: String
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct InformationSenseur {
-    derniere_lecture: Option<DateEpochSeconds>,
-    descriptif: Option<String>,
-    instance_id: String,
-    securite: Option<String>,
+async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_get_appareils_en_attente Consommer requete : {:?}", & m.message);
+    let requete: RequeteGetAppareilsEnAttente = m.message.get_msg().map_contenu(None)?;
 
+    let user_id = match m.get_user_id() {
+        Some(inner) => inner,
+        None => {
+            let reponse = json!({"ok": false, "err": "user_id manquant"});
+            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+        }
+    };
+
+    let appareils = {
+        let mut appareils = Vec::new();
+
+        let projection = doc! {
+            CHAMP_UUID_APPAREIL: 1,
+            CHAMP_INSTANCE_ID: 1,
+            CHAMP_MODIFICATION: 1,
+        };
+        let filtre = doc! {
+            CHAMP_USER_ID: &user_id,
+            "csr": {"$exists": true}
+        };
+        let opts = FindOptions::builder()
+            .projection(projection)
+            .limit(100)
+            .build();
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+        let mut curseur = collection.find(filtre, opts).await?;
+        while let Some(d) = curseur.next().await {
+            let appareil: DocAppareil = convertir_bson_deserializable(d?)?;
+            appareils.push(appareil);
+        }
+
+        appareils
+    };
+
+    let reponse = json!({
+        "ok": true,
+        "instance_id": &gestionnaire.instance_id,
+        "appareils": appareils,
+    });
+
+    debug!("requete_get_appareils_en_attente Reponse : {:?}", reponse);
+
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RequeteGetAppareilsEnAttente {
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ReponseGetAppareilsEnAttente {
+    appareils: Vec<DocAppareil>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct InformationAppareil {
+    uuid_appareil: String,
+    instance_id: String,
+    descriptif: Option<String>,
     senseurs: Option<BTreeMap<String, LectureSenseur>>,
-    uuid_senseur: String,
+    derniere_lecture: Option<DateEpochSeconds>,
 }
 
 async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
 {
     debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
-    let mut lecture: EvenementLecture = m.message.get_msg().map_contenu(None)?;
+    let lecture: EvenementLecture = m.message.get_msg().map_contenu(None)?;
     debug!("Evenement mappe : {:?}", lecture);
 
+    // Extraire instance, convertir evenement en LectureAppareilInfo
+    let instance_id = lecture.instance_id.clone();
+    let lecture = lecture.recuperer_info(middleware).await?;
+
     // Trouver date de la plus recente lecture
-    lecture.calculer_derniere_lecture();
+    let derniere_lecture = lecture.calculer_derniere_lecture();
 
     let mut filtre = doc! {
-        CHAMP_UUID_SENSEUR: &lecture.uuid_senseur,
+        CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
         "user_id": lecture.user_id.as_str(),
     };
 
     // Convertir date en format DateTime pour conserver, ajouter filtre pour eviter de
     // mettre a jour un senseur avec informations plus vieilles
-    let derniere_lecture_dt = match lecture.derniere_lecture.as_ref()  {
+    let derniere_lecture_dt = match derniere_lecture.as_ref()  {
         Some(l) => {
-            filtre.insert("derniere_lecture", doc! {"$lt": l.get_datetime().timestamp()});
+            // filtre.insert("derniere_lecture", doc! {"$lt": l.get_datetime().timestamp()});
             Some(l.get_datetime())
         },
         None => None
     };
 
     let mut set_ops = doc! {
-        "derniere_lecture": &lecture.derniere_lecture,
+        "derniere_lecture": &derniere_lecture,
         "derniere_lecture_dt": derniere_lecture_dt,
     };
 
     // let senseurs = convertir_to_bson(&lecture.senseurs)?;
-    for (senseur_id, lecture_senseur) in &lecture.senseurs {
+    for (senseur_id, lecture_senseur) in &lecture.lectures_senseurs {
         set_ops.insert(format!("senseurs.{}", senseur_id), convertir_to_bson(&lecture_senseur)?);
     }
 
     let ops = doc! {
         "$set": set_ops,
-        // {
-        //     CHAMP_SENSEURS: senseurs,
-        //     "derniere_lecture": &lecture.derniere_lecture,
-        //     "derniere_lecture_dt": derniere_lecture_dt,
-        // },
         "$setOnInsert": {
             CHAMP_CREATION: Utc::now(),
-            CHAMP_INSTANCE_ID: &lecture.instance_id,
-            CHAMP_UUID_SENSEUR: &lecture.uuid_senseur,
+            CHAMP_INSTANCE_ID: &instance_id,
+            CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
             "user_id": lecture.user_id.as_str(),
         },
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
-    let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
     let opts = UpdateOptions::builder().upsert(true).build();
     let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
 
     // Si on a cree un nouvel element, creer le senseur (et potentiellement le noeud)
-    if let Some(uid) = resultat_update.upserted_id {
-        debug!("Creation nouvelle transaction pour senseur {}", lecture.uuid_senseur);
-        let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.user_id, &lecture.instance_id);
-        let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
-            .exchanges(vec![Securite::L4Secure])
-            .partition(&gestionnaire.instance_id)
-            .build();
-        middleware.soumettre_transaction(routage, &transaction, false).await?;
-    }
+    // if let Some(uid) = resultat_update.upserted_id {
+    //     debug!("Creation nouvelle transaction pour senseur {}", lecture.uuid_senseur);
+    //     let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.user_id, &lecture.instance_id);
+    //     let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
+    //         .exchanges(vec![Securite::L4Secure])
+    //         // .partition(&gestionnaire.instance_id)
+    //         .build();
+    //     middleware.soumettre_transaction(routage, &transaction, false).await?;
+    // }
 
     // Charger etat a partir de mongo - va recuperer dates, lectures d'autres apps
     let info_senseur = {
         let projection = doc! {
-            CHAMP_UUID_SENSEUR: 1,
+            CHAMP_UUID_APPAREIL: 1,
             CHAMP_INSTANCE_ID: 1,
             "derniere_lecture": 1,
             CHAMP_SENSEURS: 1,
-            "securite": 1,
             "descriptif": 1,
         };
-        let filtre = doc! { CHAMP_UUID_SENSEUR: &lecture.uuid_senseur };
+        let filtre = doc! { CHAMP_UUID_APPAREIL: &lecture.uuid_appareil, CHAMP_USER_ID: &lecture.user_id };
         let opts = FindOneOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
         let doc_senseur = collection.find_one(filtre, opts).await?;
 
         match doc_senseur {
             Some(d) => {
-                let info_senseur: InformationSenseur = convertir_bson_deserializable(d)?;
+                let info_senseur: InformationAppareil = convertir_bson_deserializable(d)?;
                 debug!("Chargement info senseur pour evenement confirmation : {:?}", info_senseur);
                 info_senseur
             },
-            None => Err(format!("Erreur chargement senseur a partir de mongo, aucun match sur {}", &lecture.uuid_senseur))?
+            None => Err(format!("Erreur chargement senseur a partir de mongo, aucun match sur {}", &lecture.uuid_appareil))?
         }
     };
 
     // Bouncer l'evenement sur tous les exchanges appropries
     let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE)
-        .exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])
+        .exchanges(vec![Securite::L2Prive])
         .build();
 
     match middleware.emettre_evenement(routage, &info_senseur).await {
@@ -1139,28 +1198,89 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct EvenementLecture {
     instance_id: String,
-    uuid_senseur: String,
-    user_id: String,
-    senseurs: HashMap<String, LectureSenseur>,
-    derniere_lecture: Option<DateEpochSeconds>,
+    lecture: MessageMilleGrille,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LectureAppareil {
+    lectures_senseurs: HashMap<String, LectureSenseur>,
 }
 
 impl EvenementLecture {
-    fn calculer_derniere_lecture(&mut self) {
+
+    async fn recuperer_info<M>(self, middleware: &M) -> Result<LectureAppareilInfo, Box<dyn Error>>
+        where M: VerificateurMessage + ValidateurX509
+    {
+        let fingerprint_certificat = self.lecture.entete.fingerprint_certificat.clone();
+        let certificat = match &self.lecture.certificat {
+            Some(c) => {
+                middleware.charger_enveloppe(c, Some(fingerprint_certificat.as_str()), None).await?
+            },
+            None => {
+                match middleware.get_certificat(fingerprint_certificat.as_str()).await {
+                    Some(c) => c,
+                    None => Err(format!("EvenementLecture Certificat inconnu : {}", fingerprint_certificat))?
+                }
+            }
+        };
+
+        // Valider le message, extraire enveloppe
+        let mut message_serialise = MessageSerialise::from_parsed(self.lecture)?;
+        message_serialise.certificat = Some(certificat);
+
+        let validation = middleware.verifier_message(&mut message_serialise, None)?;
+        if ! validation.valide() { Err(format!("EvenementLecture Evenement de lecture echec validation"))? }
+
+        let lecture: LectureAppareil = message_serialise.parsed.map_contenu(None)?;
+
+        let (user_id, uuid_appareil) = match message_serialise.certificat {
+            Some(c) => {
+                let user_id = match c.get_user_id()? {
+                    Some(u) => u.to_owned(),
+                    None => Err(format!("EvenementLecture Evenement de lecture user_ud manquant du certificat"))?
+                };
+                debug!("EvenementLecture Certificat lecture subject: {:?}", c.subject());
+                let uuid_appareil = match c.subject()?.get("commonName") {
+                    Some(s) => s.to_owned(),
+                    None => Err(format!("EvenementLecture Evenement de lecture certificat sans uuid_appareil (commonName)"))?
+                };
+                (user_id, uuid_appareil)
+            },
+            None => Err(format!("EvenementLecture Evenement de lecture certificat manquant"))?
+        };
+
+        Ok(LectureAppareilInfo {
+            uuid_appareil,
+            user_id,
+            lectures_senseurs: lecture.lectures_senseurs,
+        })
+    }
+}
+
+struct LectureAppareilInfo {
+    uuid_appareil: String,
+    user_id: String,
+    lectures_senseurs: HashMap<String, LectureSenseur>,
+}
+
+impl LectureAppareilInfo {
+
+    fn calculer_derniere_lecture(&self) -> Option<DateEpochSeconds> {
         let mut date_lecture: &chrono::DateTime<Utc> = &chrono::MIN_DATETIME;
-        for l in self.senseurs.values() {
+        for l in self.lectures_senseurs.values() {
             date_lecture = &l.timestamp.get_datetime().max(date_lecture);
         }
 
         match date_lecture == &chrono::MIN_DATETIME {
             true => {
-                self.derniere_lecture = None
+                None
             },
             false => {
-                self.derniere_lecture = Some(DateEpochSeconds::from(date_lecture.to_owned()));
+                Some(DateEpochSeconds::from(date_lecture.to_owned()))
             }
         }
     }
+
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
