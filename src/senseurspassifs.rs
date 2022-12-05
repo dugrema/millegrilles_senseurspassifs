@@ -789,6 +789,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     let info_senseur = {
         let projection = doc! {
             CHAMP_UUID_APPAREIL: 1,
+            CHAMP_USER_ID: 1,
             CHAMP_INSTANCE_ID: 1,
             "derniere_lecture": 1,
             CHAMP_SENSEURS: 1,
@@ -812,6 +813,7 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     // Bouncer l'evenement sur tous les exchanges appropries
     let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE)
         .exchanges(vec![Securite::L2Prive])
+        .partition(info_senseur.user_id.as_str())
         .build();
 
     match middleware.emettre_evenement(routage, &info_senseur).await {

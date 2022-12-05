@@ -80,6 +80,7 @@ pub struct LectureTransaction {
 pub struct InformationAppareil {
     pub uuid_appareil: String,
     pub instance_id: String,
+    pub user_id: String,
     pub descriptif: Option<String>,
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
     pub derniere_lecture: Option<DateEpochSeconds>,
@@ -89,10 +90,18 @@ pub struct InformationAppareil {
 pub struct DocAppareil {
     pub uuid_appareil: String,
     pub instance_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cle_publique: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub csr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub certificat: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derniere_lecture: Option<DateEpochSeconds>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -65,31 +65,45 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
     debug!("requete_appareils_usager Consommer requete : {:?}", & m.message);
     let requete: RequeteAppareilsUsager = m.message.get_msg().map_contenu(None)?;
 
-    todo!("Fix me");
+    let user_id = match m.get_user_id() {
+        Some(inner) => inner,
+        None => {
+            let reponse = json!({"ok": false, "err": "user_id manquant"});
+            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+        }
+    };
 
-    // let noeuds = {
-    //     let filtre = doc! { };
-    //     let projection = doc! {
-    //         CHAMP_INSTANCE_ID: 1,
-    //         "securite": 1,
-    //         CHAMP_MODIFICATION: 1,
-    //         "descriptif": 1,
-    //     };
-    //     let opts = FindOptions::builder().projection(projection).build();
-    //     let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
-    //     let mut curseur = collection.find(filtre, opts).await?;
-    //
-    //     let mut noeuds = Vec::new();
-    //     while let Some(d) = curseur.next().await {
-    //         let noeud: TransactionMajNoeud = convertir_bson_deserializable(d?)?;
-    //         noeuds.push(noeud);
-    //     }
-    //
-    //     noeuds
-    // };
-    //
-    // let reponse = json!({ "ok": true, "instances": noeuds, "instance_id": &gestionnaire.instance_id });
-    // Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    let appareils = {
+        let mut appareils = Vec::new();
+
+        let filtre = doc! { CHAMP_USER_ID: user_id };
+
+        let projection = doc! {
+            CHAMP_UUID_APPAREIL: 1,
+            CHAMP_INSTANCE_ID: 1,
+            "derniere_lecture": 1,
+            "descriptif": 1,
+            "senseurs": 1,
+        };
+
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+        let opts = FindOptions::builder()
+            .projection(projection)
+            .limit(100)
+            .build();
+        let mut curseur = collection.find(filtre, opts).await?;
+
+        while let Some(d) = curseur.next().await {
+            let appareil: DocAppareil = convertir_bson_deserializable(d?)?;
+            appareils.push(appareil);
+        }
+
+        appareils
+    };
+
+    let reponse = json!({ "ok": true, "appareils": appareils, "instance_id": &gestionnaire.instance_id });
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
 async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -121,6 +135,11 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
 
     let reponse = json!({ "ok": true, "instances": noeuds, "instance_id": &gestionnaire.instance_id });
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RequeteSenseursParUuid {
+    uuid_senseurs: Vec<String>,
 }
 
 async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -161,8 +180,8 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct RequeteSenseursParUuid {
-    uuid_senseurs: Vec<String>,
+struct RequeteSenseursPourNoeud {
+    instance_id: String,
 }
 
 async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -203,8 +222,8 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct RequeteSenseursPourNoeud {
-    instance_id: String,
+struct RequeteGetNoeud {
+    instance_id: String
 }
 
 async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -258,8 +277,12 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct RequeteGetNoeud {
-    instance_id: String
+struct RequeteGetAppareilsEnAttente {
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ReponseGetAppareilsEnAttente {
+    appareils: Vec<DocAppareil>,
 }
 
 async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -313,13 +336,4 @@ async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAct
     debug!("requete_get_appareils_en_attente Reponse : {:?}", reponse);
 
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct RequeteGetAppareilsEnAttente {
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ReponseGetAppareilsEnAttente {
-    appareils: Vec<DocAppareil>,
 }
