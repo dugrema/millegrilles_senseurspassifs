@@ -1,5 +1,7 @@
 mod domaines_senseurspassifs;
 mod senseurspassifs;
+mod requetes;
+mod common;
 
 use log::{info};
 use millegrilles_common_rust::tokio as tokio;
