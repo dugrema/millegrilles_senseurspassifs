@@ -83,9 +83,13 @@ pub struct InformationAppareil {
     pub uuid_appareil: String,
     pub instance_id: String,
     pub user_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptif: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub derniere_lecture: Option<DateEpochSeconds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ConfigurationAppareil>,
 }
 

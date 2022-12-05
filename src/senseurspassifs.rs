@@ -491,7 +491,7 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
     {
         let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
             .exchanges(vec![Securite::L2Prive])
-            // .partition(&document_transaction.instance_id)
+            .partition(&user_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
     }
