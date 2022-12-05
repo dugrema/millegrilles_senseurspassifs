@@ -156,6 +156,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_MAJ_SENSEUR,
         TRANSACTION_MAJ_NOEUD,
         TRANSACTION_SUPPRESSION_SENSEUR,
+        TRANSACTION_MAJ_APPAREIL,
         COMMANDE_INSCRIRE_APPAREIL,
         COMMANDE_CHALLENGE_APPAREIL,
         COMMANDE_SIGNER_APPAREIL,
@@ -186,7 +187,13 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
     let mut rk_transactions = Vec::new();
 
-    let transactions_sec = vec![TRANSACTION_LECTURE, TRANSACTION_MAJ_SENSEUR, TRANSACTION_MAJ_NOEUD, TRANSACTION_SUPPRESSION_SENSEUR];
+    let transactions_sec = vec![
+        TRANSACTION_LECTURE,
+        TRANSACTION_MAJ_SENSEUR,
+        TRANSACTION_MAJ_NOEUD,
+        TRANSACTION_SUPPRESSION_SENSEUR,
+        TRANSACTION_MAJ_APPAREIL,
+    ];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
             routing_key: format!("transaction.{}.{}", DOMAINE_NOM, trans).into(),
@@ -335,7 +342,8 @@ where
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_LECTURE |
-        TRANSACTION_SUPPRESSION_SENSEUR => {
+        TRANSACTION_SUPPRESSION_SENSEUR |
+        TRANSACTION_MAJ_APPAREIL => {
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
         _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", m.action))?,
@@ -366,7 +374,8 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
         COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
-        TRANSACTION_SUPPRESSION_SENSEUR => {
+        TRANSACTION_SUPPRESSION_SENSEUR |
+        TRANSACTION_MAJ_APPAREIL => {
             // Pour l'instant, aucune autre validation. On traite comme une transaction
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
@@ -385,6 +394,7 @@ async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestionnai
         TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
         TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
+        TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), transaction.get_action())),
     }
 }
@@ -490,6 +500,97 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
     let reponse = match middleware.formatter_reponse(&document_transaction, None) {
         Ok(reponse) => Ok(Some(reponse)),
         Err(e) => Err(format!("senseurspassifs.document_transaction Erreur preparation reponse : {:?}", e))
+    }?;
+
+    Ok(reponse)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TransactionMajAppareil {
+    uuid_appareil: String,
+    configuration: ConfigurationAppareil,
+}
+
+async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_maj_senseur Consommer transaction : {:?}", &transaction);
+    let user_id = match transaction.get_enveloppe_certificat() {
+        Some(inner) => match inner.get_user_id()? {
+            Some(user) => user.to_owned(),
+            None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur user_id absent du certificat"))?
+        },
+        None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur certificat absent"))?
+    };
+
+    let transaction_convertie: TransactionMajAppareil = match transaction.convertir() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_maj_appareil Transaction lue {:?}", transaction_convertie);
+
+    let document_transaction: DocAppareil = {
+        let mut set_ops = doc! {};
+
+        if let Some(inner) = transaction_convertie.configuration.descriptif {
+            set_ops.insert("configuration.descriptif", inner);
+        }
+        if let Some(inner) = transaction_convertie.configuration.cacher_senseurs {
+            set_ops.insert("configuration.cacher_senseurs", inner);
+        }
+        if let Some(inner) = transaction_convertie.configuration.descriptif_senseurs {
+            let bson_map = match convertir_to_bson(inner) {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion descriptif_senseurs en bson : {:?}", e))?
+            };
+            set_ops.insert("configuration.descriptif_senseurs", bson_map);
+        }
+
+        let ops = doc! {
+            "$set": set_ops,
+            "$setOnInsert": {
+                CHAMP_CREATION: Utc::now(),
+                CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+                CHAMP_USER_ID: &user_id,
+            },
+            "$currentDate": {CHAMP_MODIFICATION: true}
+        };
+
+        let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil, CHAMP_USER_ID: &user_id };
+        let opts = FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .build();
+
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+            Ok(r) => match r {
+                Some(r) => match convertir_bson_deserializable(r) {
+                    Ok(r) => r,
+                    Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion document senseur en doc TransactionMajSenseur: {:?}", e))?
+                },
+                None => Err(format!("senseurspassifs.transaction_maj_appareil Erreur chargement doc senseur apres MAJ"))?
+            },
+            Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur traitement transaction senseur : {:?}", e))?
+        }
+    };
+    debug!("transaction_maj_appareil Resultat maj transaction : {:?}", document_transaction);
+
+    {
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
+            .exchanges(vec![Securite::L2Prive])
+            .partition(&user_id)
+            .build();
+        middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
+    }
+
+    debug!("transaction_maj_appareil Resultat ajout transaction : {:?}", document_transaction);
+    let reponse = match middleware.formatter_reponse(&document_transaction, None) {
+        Ok(reponse) => Ok(Some(reponse)),
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur preparation reponse : {:?}", e))
     }?;
 
     Ok(reponse)

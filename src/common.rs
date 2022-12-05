@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use millegrilles_common_rust::formatteur_messages::DateEpochSeconds;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
+use millegrilles_common_rust::serde_json::Value;
 
 pub const DOMAINE_NOM: &str = "SenseursPassifs";
 pub const ROLE_RELAI_NOM: &str = "senseurspassifs_relai";
@@ -23,6 +24,7 @@ pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
 pub const TRANSACTION_MAJ_NOEUD: &str = "majNoeud";
 pub const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
+pub const TRANSACTION_MAJ_APPAREIL: &str = "majAppareil";
 
 //const CHAMP_INSTANCE_ID: &str = "instance_id";
 pub const CHAMP_INSTANCE_ID: &str = "instance_id";
@@ -84,6 +86,7 @@ pub struct InformationAppareil {
     pub descriptif: Option<String>,
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
     pub derniere_lecture: Option<DateEpochSeconds>,
+    pub configuration: Option<ConfigurationAppareil>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -102,6 +105,8 @@ pub struct DocAppareil {
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derniere_lecture: Option<DateEpochSeconds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<ConfigurationAppareil>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -118,4 +123,11 @@ pub struct LectureSenseur {
     pub valeur: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub valeur_str: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigurationAppareil {
+    pub descriptif: Option<String>,
+    pub cacher_senseurs: Option<Vec<String>>,
+    pub descriptif_senseurs: Option<HashMap<String, String>>,
 }
