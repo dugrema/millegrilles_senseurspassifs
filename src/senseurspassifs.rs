@@ -548,6 +548,13 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
             };
             set_ops.insert("configuration.descriptif_senseurs", bson_map);
         }
+        if let Some(inner) = transaction_convertie.configuration.displays {
+            let bson_map = match convertir_to_bson(inner) {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion displays en bson : {:?}", e))?
+            };
+            set_ops.insert("configuration.displays", bson_map);
+        }
 
         let ops = doc! {
             "$set": set_ops,
@@ -743,7 +750,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
             if let Some(_) = resultat.upserted_id {
                 debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
                 let transaction = TransactionMajSenseur::new(
-                    &contenu_transaction.uuid_senseur, &contenu_transaction.user_id, &contenu_transaction.instance_id);
+                    &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
                 let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
                     .exchanges(vec![Securite::L4Secure])
                     // .partition(&gestionnaire.instance_id)
@@ -980,7 +987,7 @@ struct LectureAppareilInfo {
     uuid_appareil: String,
     user_id: String,
     lectures_senseurs: HashMap<String, LectureSenseur>,
-    displays: Option<Vec<ConfigurationDisplay>>,
+    displays: Option<Vec<ParamsDisplay>>,
 }
 
 impl LectureAppareilInfo {
@@ -1009,16 +1016,19 @@ struct TransactionMajSenseur {
     instance_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     descriptif: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    displays: Option<HashMap<String, ParametresDisplay>>
 }
 
 impl TransactionMajSenseur {
-    pub fn new<S, T, U>(uuid_senseur: S, user_id: T, uuid_noeud: U)  -> Self
-        where S: Into<String>, T: Into<String>, U: Into<String>
+    pub fn new<S, U>(uuid_senseur: S, uuid_noeud: U)  -> Self
+        where S: Into<String>, U: Into<String>
     {
         TransactionMajSenseur {
             uuid_senseur: uuid_senseur.into(),
             instance_id: uuid_noeud.into(),
             descriptif: None,
+            displays: None,
         }
     }
 }

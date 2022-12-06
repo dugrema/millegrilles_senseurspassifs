@@ -85,6 +85,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
             "descriptif": 1,
             "senseurs": 1,
             "configuration": 1,
+            "displays": 1,
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;

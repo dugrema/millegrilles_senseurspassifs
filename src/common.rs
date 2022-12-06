@@ -111,16 +111,18 @@ pub struct DocAppareil {
     pub derniere_lecture: Option<DateEpochSeconds>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ConfigurationAppareil>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displays: Option<Vec<ParamsDisplay>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LectureAppareil {
     pub lectures_senseurs: HashMap<String, LectureSenseur>,
-    pub displays: Option<Vec<ConfigurationDisplay>>,
+    pub displays: Option<Vec<ParamsDisplay>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConfigurationDisplay {
+pub struct ParamsDisplay {
     pub name: String,
     pub format: String,
     pub height: Option<u16>,
@@ -143,4 +145,18 @@ pub struct ConfigurationAppareil {
     pub descriptif: Option<String>,
     pub cacher_senseurs: Option<Vec<String>>,
     pub descriptif_senseurs: Option<HashMap<String, String>>,
+    pub displays: Option<HashMap<String, ParametresDisplay>>
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ParametresDisplay {
+    pub lignes: Option<Vec<ParametresDisplayLigne>>,
+    pub afficher_date_duree: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ParametresDisplayLigne {
+    pub masque: String,
+    pub variable: Option<String>,
+    pub duree: Option<u16>,
 }
