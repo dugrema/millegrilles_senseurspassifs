@@ -116,6 +116,15 @@ pub struct DocAppareil {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LectureAppareil {
     pub lectures_senseurs: HashMap<String, LectureSenseur>,
+    pub displays: Option<Vec<ConfigurationDisplay>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigurationDisplay {
+    pub name: String,
+    pub format: String,
+    pub height: Option<u16>,
+    pub width: Option<u16>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

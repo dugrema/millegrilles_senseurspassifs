@@ -25,7 +25,7 @@ use millegrilles_common_rust::tokio::time::{Duration, sleep};
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::transactions::{TraiterTransaction, Transaction, TransactionImpl};
 use millegrilles_common_rust::verificateur::VerificateurMessage;
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson, convertir_bson_value, filtrer_doc_id};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson, convertir_bson_value, filtrer_doc_id, convertir_to_bson_array};
 
 use crate::requetes::consommer_requete;
 use crate::common::*;
@@ -859,6 +859,10 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     for (senseur_id, lecture_senseur) in &lecture.lectures_senseurs {
         set_ops.insert(format!("senseurs.{}", senseur_id), convertir_to_bson(&lecture_senseur)?);
     }
+    if let Some(displays) = lecture.displays {
+        debug!("Convserver displays : {:?}", displays);
+        set_ops.insert("displays", convertir_to_bson_array(displays)?);
+    }
 
     let ops = doc! {
         "$set": set_ops,
@@ -874,17 +878,6 @@ async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, g
     let opts = UpdateOptions::builder().upsert(true).build();
     let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
-
-    // Si on a cree un nouvel element, creer le senseur (et potentiellement le noeud)
-    // if let Some(uid) = resultat_update.upserted_id {
-    //     debug!("Creation nouvelle transaction pour senseur {}", lecture.uuid_senseur);
-    //     let transaction = TransactionMajSenseur::new(&lecture.uuid_senseur, &lecture.user_id, &lecture.instance_id);
-    //     let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
-    //         .exchanges(vec![Securite::L4Secure])
-    //         // .partition(&gestionnaire.instance_id)
-    //         .build();
-    //     middleware.soumettre_transaction(routage, &transaction, false).await?;
-    // }
 
     // Charger etat a partir de mongo - va recuperer dates, lectures d'autres apps
     let info_senseur = {
@@ -978,6 +971,7 @@ impl EvenementLecture {
             uuid_appareil,
             user_id,
             lectures_senseurs: lecture.lectures_senseurs,
+            displays: lecture.displays,
         })
     }
 }
@@ -986,6 +980,7 @@ struct LectureAppareilInfo {
     uuid_appareil: String,
     user_id: String,
     lectures_senseurs: HashMap<String, LectureSenseur>,
+    displays: Option<Vec<ConfigurationDisplay>>,
 }
 
 impl LectureAppareilInfo {
