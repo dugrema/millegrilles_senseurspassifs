@@ -12,6 +12,7 @@ pub const REQUETE_GET_NOEUD: &str = "getNoeud";
 pub const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
 pub const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
 pub const REQUETE_GET_APPAREILS_EN_ATTENTE: &str = "getAppareilsEnAttente";
+pub const REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION: &str = "getAppareilDisplayConfiguration";
 
 pub const EVENEMENT_LECTURE: &str = "lecture";
 pub const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
@@ -142,15 +143,21 @@ pub struct LectureSenseur {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigurationAppareil {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptif: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cacher_senseurs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptif_senseurs: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub displays: Option<HashMap<String, ParametresDisplay>>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParametresDisplay {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lignes: Option<Vec<ParametresDisplayLigne>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub afficher_date_duree: Option<u16>,
 }
 

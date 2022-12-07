@@ -23,35 +23,62 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
     debug!("Consommer requete : {:?}", &message.message);
 
     // Autorisation : On accepte les requetes de 3.protege ou 4.secure
-    match message.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
-        true => Ok(()),
-        false => {
-            match message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
-                true => Ok(()),
-                false => Err(format!("senseurspassifs.consommer_requete Autorisation invalide (pas d'un exchange reconnu) : {}", message.routing_key))
-            }
-        },
-    }?;
+    let exchanges_ok = message.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]);
+    let delegation_globale = message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE);
+    let user_id = message.get_user_id();
 
-    match message.domaine.as_str() {
-        DOMAINE_NOM => {
-            match message.action.as_str() {
-                REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
-                REQUETE_LISTE_NOEUDS => requete_liste_noeuds(middleware, message, gestionnaire).await,
-                REQUETE_LISTE_SENSEURS_PAR_UUID => requete_liste_senseurs_par_uuid(middleware, message, gestionnaire).await,
-                REQUETE_LISTE_SENSEURS_NOEUD => requete_liste_senseurs_pour_noeud(middleware, message, gestionnaire).await,
-                REQUETE_GET_NOEUD => requete_get_noeud(middleware, message, gestionnaire).await,
-                REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
-                _ => {
-                    error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
-                    Ok(None)
-                },
-            }
-        },
-        _ => {
-            error!("Message requete/domaine inconnu : '{}'. Message dropped.", message.domaine);
-            Ok(None)
-        },
+    // match message.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
+    //     true => Ok(()),
+    //     false => {
+    //         match message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
+    //             true => Ok(()),
+    //             false => Err(format!("senseurspassifs.consommer_requete Autorisation invalide (pas d'un exchange reconnu) : {}", message.routing_key))
+    //         }
+    //     },
+    // }?;
+
+    if exchanges_ok || delegation_globale {
+        match message.domaine.as_str() {
+            DOMAINE_NOM => {
+                match message.action.as_str() {
+                    REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
+                    REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => requete_appareil_display_configuration(middleware, message, gestionnaire).await,
+                    REQUETE_LISTE_NOEUDS => requete_liste_noeuds(middleware, message, gestionnaire).await,
+                    REQUETE_LISTE_SENSEURS_PAR_UUID => requete_liste_senseurs_par_uuid(middleware, message, gestionnaire).await,
+                    REQUETE_LISTE_SENSEURS_NOEUD => requete_liste_senseurs_pour_noeud(middleware, message, gestionnaire).await,
+                    REQUETE_GET_NOEUD => requete_get_noeud(middleware, message, gestionnaire).await,
+                    REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
+                    _ => {
+                        error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
+                        Ok(None)
+                    },
+                }
+            },
+            _ => {
+                error!("Message requete/domaine inconnu : '{}'. Message dropped.", message.domaine);
+                Ok(None)
+            },
+        }
+    } else if user_id.is_some() {
+        match message.domaine.as_str() {
+            DOMAINE_NOM => {
+                match message.action.as_str() {
+                    REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
+                    REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => requete_appareil_display_configuration(middleware, message, gestionnaire).await,
+                    _ => {
+                        error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
+                        Ok(None)
+                    },
+                }
+            },
+            _ => {
+                error!("Message requete/domaine inconnu : '{}'. Message dropped.", message.domaine);
+                Ok(None)
+            },
+        }
+    } else {
+        error!("Message autorisation refusee : '{}'. Message dropped.", message.domaine);
+        Ok(None)
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,6 +132,65 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
     };
 
     let reponse = json!({ "ok": true, "appareils": appareils, "instance_id": &gestionnaire.instance_id });
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RequeteAppareilsDisplayConfiguration {
+    // uuid_appareil: String,  // Extrait du certificat, comme user_id
+}
+
+async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_appareil_display_configuration Consommer requete : {:?}", & m.message);
+    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu(None)?;
+
+    // Extraire user_id, uuid_appareil du certificat
+    let (user_id, uuid_appareil) = match m.message.certificat {
+        Some(c) => {
+            let user_id = match c.get_user_id()? {
+                Some(u) => u.to_owned(),
+                None => Err(format!("EvenementLecture Evenement de lecture user_id manquant du certificat"))?
+            };
+            debug!("EvenementLecture Certificat lecture subject: {:?}", c.subject());
+            let uuid_appareil = match c.subject()?.get("commonName") {
+                Some(s) => s.to_owned(),
+                None => Err(format!("EvenementLecture Evenement de lecture certificat sans uuid_appareil (commonName)"))?
+            };
+            (user_id, uuid_appareil)
+        },
+        None => Err(format!("EvenementLecture Evenement de lecture certificat manquant"))?
+    };
+
+    let display_configuration = {
+        let filtre = doc! { CHAMP_USER_ID: user_id, CHAMP_UUID_APPAREIL: uuid_appareil };
+
+        let projection = doc! {
+            CHAMP_UUID_APPAREIL: 1,
+            CHAMP_INSTANCE_ID: 1,
+            "derniere_lecture": 1,
+            "configuration.displays": 1,
+        };
+
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+        let opts = FindOneOptions::builder().projection(projection).build();
+        let document_configuration = collection.find_one(filtre, opts).await?;
+        match document_configuration {
+            Some(d) => {
+                let display_configuration: DocAppareil = convertir_bson_deserializable(d)?;
+                display_configuration
+            },
+            None => {
+                let reponse = json!({"ok": false, "err": "appareil inconnu"});
+                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            }
+        }
+    };
+
+    let reponse = json!({ "ok": true, "display_configuration": display_configuration });
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
