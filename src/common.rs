@@ -16,6 +16,7 @@ pub const REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION: &str = "getAppareilDisplay
 
 pub const EVENEMENT_LECTURE: &str = "lecture";
 pub const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
+pub const EVENEMENT_MAJ_DISPLAYS: &str = "evenementMajDisplays";
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";

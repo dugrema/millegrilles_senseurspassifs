@@ -587,12 +587,28 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
     };
     debug!("transaction_maj_appareil Resultat maj transaction : {:?}", document_transaction);
 
+    // Evenement de mise a jour de l'appareil (web)
     {
         let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
             .exchanges(vec![Securite::L2Prive])
             .partition(&user_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
+    }
+
+    // Evenement de mise a jour des displays (relais)
+    if let Some(configuration) = &document_transaction.configuration {
+        if let Some(displays) = &configuration.displays {
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_DISPLAYS)
+                .exchanges(vec![Securite::L2Prive])
+                .partition(&user_id)
+                .build();
+            let evenement_displays = json!({
+                CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+                "displays": displays
+            });
+            middleware.emettre_evenement(routage_evenement, &evenement_displays).await?;
+        }
     }
 
     debug!("transaction_maj_appareil Resultat ajout transaction : {:?}", document_transaction);
