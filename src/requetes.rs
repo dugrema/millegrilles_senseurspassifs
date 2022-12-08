@@ -65,6 +65,7 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                 match message.action.as_str() {
                     REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => requete_appareil_display_configuration(middleware, message, gestionnaire).await,
+                    REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
                     _ => {
                         error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                         Ok(None)

@@ -357,17 +357,14 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
 {
     debug!("consommer_commande : {:?}", &m.message);
 
+    let user_id = m.get_user_id();
+
     // Autorisation : doit etre un message via exchange
-    match m.verifier_exchanges(vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege, Securite::L4Secure)) {
-        true => Ok(()),
-        false => {
-            // Verifier si on a un certificat delegation globale
-            match m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
-                true => Ok(()),
-                false => Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide pour message {:?}", m.correlation_id)),
-            }
-        }
-    }?;
+    if user_id.is_none() &&
+        ! m.verifier_exchanges(vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege, Securite::L4Secure)) &&
+        ! m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
+            Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide pour message {:?}", m.correlation_id))?
+    }
 
     match m.action.as_str() {
         COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
