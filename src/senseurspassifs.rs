@@ -29,6 +29,7 @@ use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIn
 
 use crate::requetes::consommer_requete;
 use crate::common::*;
+use crate::lectures::{evenement_domaine_lecture, generer_transactions_lectures_horaires};
 
 const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
 const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
@@ -259,7 +260,8 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
     };
     let champs_index_lectures_senseurs = vec!(
         ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
-        ChampIndex {nom_champ: String::from(CHAMP_UUID_SENSEUR), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_UUID_APPAREIL), direction: 1},
+        ChampIndex {nom_champ: String::from("senseur_id"), direction: 1},
     );
     middleware.create_index(
         middleware,
@@ -295,11 +297,15 @@ pub async fn entretien<M>(_middleware: Arc<M>)
     }
 }
 
-pub async fn traiter_cedule<M>(_middleware: &M, _trigger: &MessageCedule) -> Result<(), Box<dyn Error>>
+pub async fn traiter_cedule<M>(middleware: &M, _trigger: &MessageCedule) -> Result<(), Box<dyn Error>>
 where M: Middleware + 'static {
     // let message = trigger.message;
 
     debug!("Traiter cedule {}", DOMAINE_NOM);
+
+    if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
+        error!("traiter_cedule Erreur generer_transactions : {:?}", e);
+    }
 
     Ok(())
 }
@@ -840,188 +846,6 @@ impl TransactionLectures {
             None => None
         }
     }
-}
-
-async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
-{
-    debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
-    let lecture: EvenementLecture = m.message.get_msg().map_contenu(None)?;
-    debug!("Evenement mappe : {:?}", lecture);
-
-    // Extraire instance, convertir evenement en LectureAppareilInfo
-    let instance_id = lecture.instance_id.clone();
-    let lecture = lecture.recuperer_info(middleware).await?;
-
-    // Trouver date de la plus recente lecture
-    let derniere_lecture = lecture.calculer_derniere_lecture();
-
-    let mut filtre = doc! {
-        CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
-        "user_id": lecture.user_id.as_str(),
-    };
-
-    // Convertir date en format DateTime pour conserver, ajouter filtre pour eviter de
-    // mettre a jour un senseur avec informations plus vieilles
-    let derniere_lecture_dt = match derniere_lecture.as_ref()  {
-        Some(l) => {
-            // filtre.insert("derniere_lecture", doc! {"$lt": l.get_datetime().timestamp()});
-            Some(l.get_datetime())
-        },
-        None => None
-    };
-
-    let mut set_ops = doc! {
-        "derniere_lecture": &derniere_lecture,
-        "derniere_lecture_dt": derniere_lecture_dt,
-    };
-
-    // let senseurs = convertir_to_bson(&lecture.senseurs)?;
-    for (senseur_id, lecture_senseur) in &lecture.lectures_senseurs {
-        set_ops.insert(format!("senseurs.{}", senseur_id), convertir_to_bson(&lecture_senseur)?);
-    }
-    if let Some(displays) = lecture.displays {
-        debug!("Convserver displays : {:?}", displays);
-        set_ops.insert("displays", convertir_to_bson_array(displays)?);
-    }
-
-    let ops = doc! {
-        "$set": set_ops,
-        "$setOnInsert": {
-            CHAMP_CREATION: Utc::now(),
-            CHAMP_INSTANCE_ID: &instance_id,
-            CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
-            "user_id": lecture.user_id.as_str(),
-        },
-        "$currentDate": { CHAMP_MODIFICATION: true },
-    };
-    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    let opts = UpdateOptions::builder().upsert(true).build();
-    let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
-    debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
-
-    // Charger etat a partir de mongo - va recuperer dates, lectures d'autres apps
-    let info_senseur = {
-        let projection = doc! {
-            CHAMP_UUID_APPAREIL: 1,
-            CHAMP_USER_ID: 1,
-            CHAMP_INSTANCE_ID: 1,
-            "derniere_lecture": 1,
-            CHAMP_SENSEURS: 1,
-            "descriptif": 1,
-        };
-        let filtre = doc! { CHAMP_UUID_APPAREIL: &lecture.uuid_appareil, CHAMP_USER_ID: &lecture.user_id };
-        let opts = FindOneOptions::builder().projection(projection).build();
-        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-        let doc_senseur = collection.find_one(filtre, opts).await?;
-
-        match doc_senseur {
-            Some(d) => {
-                let info_senseur: InformationAppareil = convertir_bson_deserializable(d)?;
-                debug!("Chargement info senseur pour evenement confirmation : {:?}", info_senseur);
-                info_senseur
-            },
-            None => Err(format!("Erreur chargement senseur a partir de mongo, aucun match sur {}", &lecture.uuid_appareil))?
-        }
-    };
-
-    // Bouncer l'evenement sur tous les exchanges appropries
-    let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE)
-        .exchanges(vec![Securite::L2Prive])
-        .partition(info_senseur.user_id.as_str())
-        .build();
-
-    match middleware.emettre_evenement(routage, &info_senseur).await {
-        Ok(_) => (),
-        Err(e) => warn!("senseurspassifs.evenement_domaine_lecture Erreur emission evenement lecture confirmee : {:?}", e)
-    }
-
-    Ok(())
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct EvenementLecture {
-    instance_id: String,
-    lecture: MessageMilleGrille,
-}
-
-impl EvenementLecture {
-
-    async fn recuperer_info<M>(self, middleware: &M) -> Result<LectureAppareilInfo, Box<dyn Error>>
-        where M: VerificateurMessage + ValidateurX509
-    {
-        let fingerprint_certificat = self.lecture.entete.fingerprint_certificat.clone();
-        let certificat = match &self.lecture.certificat {
-            Some(c) => {
-                middleware.charger_enveloppe(c, Some(fingerprint_certificat.as_str()), None).await?
-            },
-            None => {
-                match middleware.get_certificat(fingerprint_certificat.as_str()).await {
-                    Some(c) => c,
-                    None => Err(format!("EvenementLecture Certificat inconnu : {}", fingerprint_certificat))?
-                }
-            }
-        };
-
-        // Valider le message, extraire enveloppe
-        let mut message_serialise = MessageSerialise::from_parsed(self.lecture)?;
-        message_serialise.certificat = Some(certificat);
-
-        let validation = middleware.verifier_message(&mut message_serialise, None)?;
-        if ! validation.valide() { Err(format!("EvenementLecture Evenement de lecture echec validation"))? }
-
-        let lecture: LectureAppareil = message_serialise.parsed.map_contenu(None)?;
-
-        let (user_id, uuid_appareil) = match message_serialise.certificat {
-            Some(c) => {
-                let user_id = match c.get_user_id()? {
-                    Some(u) => u.to_owned(),
-                    None => Err(format!("EvenementLecture Evenement de lecture user_ud manquant du certificat"))?
-                };
-                debug!("EvenementLecture Certificat lecture subject: {:?}", c.subject());
-                let uuid_appareil = match c.subject()?.get("commonName") {
-                    Some(s) => s.to_owned(),
-                    None => Err(format!("EvenementLecture Evenement de lecture certificat sans uuid_appareil (commonName)"))?
-                };
-                (user_id, uuid_appareil)
-            },
-            None => Err(format!("EvenementLecture Evenement de lecture certificat manquant"))?
-        };
-
-        Ok(LectureAppareilInfo {
-            uuid_appareil,
-            user_id,
-            lectures_senseurs: lecture.lectures_senseurs,
-            displays: lecture.displays,
-        })
-    }
-}
-
-struct LectureAppareilInfo {
-    uuid_appareil: String,
-    user_id: String,
-    lectures_senseurs: HashMap<String, LectureSenseur>,
-    displays: Option<Vec<ParamsDisplay>>,
-}
-
-impl LectureAppareilInfo {
-
-    fn calculer_derniere_lecture(&self) -> Option<DateEpochSeconds> {
-        let mut date_lecture: &chrono::DateTime<Utc> = &chrono::MIN_DATETIME;
-        for l in self.lectures_senseurs.values() {
-            date_lecture = &l.timestamp.get_datetime().max(date_lecture);
-        }
-
-        match date_lecture == &chrono::MIN_DATETIME {
-            true => {
-                None
-            },
-            false => {
-                Some(DateEpochSeconds::from(date_lecture.to_owned()))
-            }
-        }
-    }
-
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
