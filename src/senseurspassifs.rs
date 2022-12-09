@@ -62,6 +62,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         COLLECTIONS_INSTANCES.to_string(),
         COLLECTIONS_LECTURES.to_string(),
         COLLECTIONS_APPAREILS.to_string(),
+        COLLECTIONS_SENSEURS_HORAIRE.to_string(),
     ] }
 
     fn get_q_transactions(&self) -> Option<String> {
@@ -196,6 +197,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_MAJ_NOEUD,
         TRANSACTION_SUPPRESSION_SENSEUR,
         TRANSACTION_MAJ_APPAREIL,
+        TRANSACTION_SENSEUR_HORAIRE,
     ];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
@@ -351,7 +353,8 @@ where
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_LECTURE |
         TRANSACTION_SUPPRESSION_SENSEUR |
-        TRANSACTION_MAJ_APPAREIL => {
+        TRANSACTION_MAJ_APPAREIL |
+        TRANSACTION_SENSEUR_HORAIRE => {
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
         _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", m.action))?,

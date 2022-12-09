@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use log::{debug, warn};
+use log::{debug, error, info, warn};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::ValidateurX509;
 use millegrilles_common_rust::chrono;
@@ -29,6 +29,7 @@ pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestio
         TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire).await,
+        TRANSACTION_SENSEUR_HORAIRE => transaction_senseur_horaire(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), transaction.get_action())),
     }
 }
@@ -499,4 +500,73 @@ impl TransactionMajSenseur {
             displays: None,
         }
     }
+}
+
+async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_senseur_horaire Consommer transaction : {:?}", &transaction);
+    let transaction_convertie: TransactionLectureHoraire = match transaction.convertir() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_senseur_horaire Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_senseur_horaire Transaction lue {:?}", transaction_convertie);
+
+    // Inserer dans la table de lectures senseurs horaires
+    {
+        let now = Utc::now();
+        let mut doc_insert = doc! {
+            CHAMP_CREATION: &now,
+            CHAMP_USER_ID: &transaction_convertie.user_id,
+            CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+            "senseur_id": &transaction_convertie.senseur_id,
+            "heure": &transaction_convertie.heure,
+        };
+
+        if let Some(v) = transaction_convertie.min {
+            doc_insert.insert("min", v);
+        }
+        if let Some(v) = transaction_convertie.max {
+            doc_insert.insert("max", v);
+        }
+        if let Some(v) = transaction_convertie.avg {
+            doc_insert.insert("avg", v);
+        }
+
+        let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
+        match collection.insert_one(doc_insert, None).await {
+            Ok(_) => (),
+            Err(e) => {
+                warn!("transaction_senseur_horaire Erreur insertion senseurs horaire : {:?}", e)
+            }
+        }
+    }
+
+    // Cleanup table lectures
+    let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
+    let filtre = doc! {
+        CHAMP_USER_ID: &transaction_convertie.user_id,
+        CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+        "senseur_id": &transaction_convertie.senseur_id,
+    };
+    let ops = doc! {
+        "$set": {"derniere_aggregation": heure_max.timestamp()},
+        "$pull": {"lectures": {"timestamp": {"$gte": &transaction_convertie.heure.get_datetime().timestamp(), "$lt": heure_max.timestamp()}}},
+        "$currentDate": {CHAMP_MODIFICATION: true},
+    };
+    debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
+    let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
+    match collection.update_many(filtre, ops, None).await {
+        Ok(result) => {
+            if result.modified_count != 1 {
+                info!("transaction_senseur_horaire Aucune modification dans table lectures");
+            }
+        },
+        Err(e) => Err(format!("transactions.transaction_senseur_horaire Erreur update_many : {:?}", e))?
+    }
+
+    middleware.reponse_ok()
 }

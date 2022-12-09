@@ -254,18 +254,6 @@ struct LecturesCumulees {
     lectures: Vec<LectureSenseur>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct TransactionLectureHoraire {
-    heure: DateEpochSeconds,
-    user_id: String,
-    uuid_appareil: String,
-    senseur_id: String,
-    lectures: Vec<LectureSenseur>,
-    min: Option<f64>,
-    max: Option<f64>,
-    avg: Option<f64>,
-}
-
 pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result<(), Box<dyn Error>>
     where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
 {
@@ -281,16 +269,14 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result
     let mut curseur = collection.find(filtre, None).await?;
     while let Some(d) = curseur.next().await {
         let lectures: LecturesCumulees = convertir_bson_deserializable(d?)?;
-        let transactions = generer_transactions(lectures)?;
-
-        debug!("Soumettre transaction lectures horaires : {:?}", transactions);
+        generer_transactions(middleware, lectures).await?;
     }
 
     Ok(())
 }
 
-fn generer_transactions(lectures: LecturesCumulees)
-    -> Result<Vec<TransactionLectureHoraire>, Box<dyn Error>>
+async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages
 {
     let heure_courante = heure_juste(&Utc::now());
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
@@ -315,7 +301,6 @@ fn generer_transactions(lectures: LecturesCumulees)
     }
 
     // Generer transactions pour chaque heure
-    let mut transactions_generees = Vec::new();
     for (heure, groupe) in groupes_heures {
         let heure_dt = DateEpochSeconds::from_i64(heure);
         let heure_max = heure_dt.get_datetime().to_owned() + chrono::Duration::hours(1);
@@ -373,10 +358,15 @@ fn generer_transactions(lectures: LecturesCumulees)
             avg: moyenne
         };
 
-        transactions_generees.push(transaction);
+        let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE)
+            .exchanges(vec![Securite::L4Secure])
+            .build();
+
+        debug!("Soumettre transaction : {:?}", transaction);
+        middleware.soumettre_transaction(routage, &transaction, false).await?;
     }
 
-    Ok(transactions_generees)
+    Ok(())
 }
 
 fn heure_juste(date: &DateTime<Utc>) -> DateTime<Utc> {

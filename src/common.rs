@@ -27,6 +27,7 @@ pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
 pub const TRANSACTION_MAJ_NOEUD: &str = "majNoeud";
 pub const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
 pub const TRANSACTION_MAJ_APPAREIL: &str = "majAppareil";
+pub const TRANSACTION_SENSEUR_HORAIRE: &str = "senseurHoraire";
 
 //const CHAMP_INSTANCE_ID: &str = "instance_id";
 pub const CHAMP_INSTANCE_ID: &str = "instance_id";
@@ -39,6 +40,7 @@ pub const COLLECTIONS_NOM: &str = "SenseursPassifs";
 pub const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";
 pub const COLLECTIONS_LECTURES: &str = "SenseursPassifs/lectures";
 pub const COLLECTIONS_APPAREILS: &str = "SenseursPassifs/appareils";
+pub const COLLECTIONS_SENSEURS_HORAIRE: &str = "SenseursPassifs/senseurs_horaire";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionMajNoeud {
@@ -167,4 +169,16 @@ pub struct ParametresDisplayLigne {
     pub masque: String,
     pub variable: Option<String>,
     pub duree: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionLectureHoraire {
+    pub heure: DateEpochSeconds,
+    pub user_id: String,
+    pub uuid_appareil: String,
+    pub senseur_id: String,
+    pub lectures: Vec<LectureSenseur>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub avg: Option<f64>,
 }
