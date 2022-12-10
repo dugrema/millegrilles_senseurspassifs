@@ -121,11 +121,6 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
 pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueType> {
     let mut rk_volatils = Vec::new();
 
-    let instance_id = gestionnaire.instance_id.as_str();
-    let securite_prive_prot_sec = vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure];
-    // let securite_prot_sec = vec![Securite::L3Protege, Securite::L4Secure];
-    // let securite_prive_prot = vec![Securite::L2Prive, Securite::L3Protege];
-
     // RK 2.prive, 3.protege et 4.secure
     let requetes_privees: Vec<&str> = vec![
         REQUETE_GET_APPAREILS_USAGER,
@@ -135,18 +130,15 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         REQUETE_LISTE_SENSEURS_PAR_UUID,
         REQUETE_LISTE_SENSEURS_NOEUD,
         REQUETE_GET_APPAREILS_EN_ATTENTE,
+        REQUETE_GET_STATISTIQUES_SENSEUR,
     ];
     for req in requetes_privees {
-        // for sec in &securite_prive_prot {
-            rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, req), exchange: Securite::L2Prive});
-        // }
+        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, req), exchange: Securite::L2Prive});
     }
 
     // Requete liste noeuds permet de trouver les noeuds sur toutes les partitions (potentiellement plusieurs reponses)
-    //for sec in &securite_prive_prot {
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_NOEUD), exchange: Securite::L2Prive});
-        rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_NOEUDS), exchange: Securite::L2Prive});
-    //}
+    rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_NOEUD), exchange: Securite::L2Prive});
+    rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_NOEUDS), exchange: Securite::L2Prive});
 
     let evenements: Vec<&str> = vec![
         EVENEMENT_LECTURE,
@@ -171,12 +163,10 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
     }
 
-    //for sec in securite_prive_prot {
-        rk_volatils.push(ConfigRoutingExchange {
-            routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, gestionnaire.instance_id.as_str(), TRANSACTION_LECTURE).into(),
-            exchange: Securite::L2Prive
-       });
-    //}
+    rk_volatils.push(ConfigRoutingExchange {
+        routing_key: format!("commande.{}.{}.{}", DOMAINE_NOM, gestionnaire.instance_id.as_str(), TRANSACTION_LECTURE).into(),
+        exchange: Securite::L2Prive
+    });
 
     let mut queues = Vec::new();
 

@@ -1,9 +1,11 @@
 use std::error::Error;
 use log::{debug, error};
-use millegrilles_common_rust::bson::doc;
+use millegrilles_common_rust::bson::{bson, doc};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
+use millegrilles_common_rust::chrono;
+use millegrilles_common_rust::chrono::Utc;
 use millegrilles_common_rust::formatteur_messages::MessageMilleGrille;
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
@@ -27,16 +29,6 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
     let delegation_globale = message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE);
     let user_id = message.get_user_id();
 
-    // match message.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
-    //     true => Ok(()),
-    //     false => {
-    //         match message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
-    //             true => Ok(()),
-    //             false => Err(format!("senseurspassifs.consommer_requete Autorisation invalide (pas d'un exchange reconnu) : {}", message.routing_key))
-    //         }
-    //     },
-    // }?;
-
     if exchanges_ok || delegation_globale {
         match message.domaine.as_str() {
             DOMAINE_NOM => {
@@ -48,6 +40,7 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                     REQUETE_LISTE_SENSEURS_NOEUD => requete_liste_senseurs_pour_noeud(middleware, message, gestionnaire).await,
                     REQUETE_GET_NOEUD => requete_get_noeud(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
+                    REQUETE_GET_STATISTIQUES_SENSEUR => requete_get_statistiques_senseur(middleware, message, gestionnaire).await,
                     _ => {
                         error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                         Ok(None)
@@ -423,6 +416,76 @@ async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAct
     });
 
     debug!("requete_get_appareils_en_attente Reponse : {:?}", reponse);
+
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RequeteGetStatistiquesSenseur {
+    uuid_appareil: String,
+    senseur_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ResultatStatistiquesSenseurRow {
+    heure: usize,
+    min: Option<f64>,
+    max: Option<f64>,
+    avg: Option<f64>,
+}
+
+async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_get_statistiques_senseur Consommer requete : {:?}", & m.message);
+    let requete: RequeteGetStatistiquesSenseur = m.message.get_msg().map_contenu(None)?;
+
+    let user_id = match m.get_user_id() {
+        Some(inner) => inner,
+        None => {
+            let reponse = json!({"ok": false, "err": "user_id manquant"});
+            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+        }
+    };
+
+    let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
+
+    let periode72h = {
+        let min_date = Utc::now() - chrono::Duration::days(3);
+
+        let filtre = doc! {
+            "user_id": &user_id,
+            "uuid_appareil": &requete.uuid_appareil,
+            "senseur_id": &requete.senseur_id,
+            "heure": {"$gte": min_date.timestamp()}
+        };
+
+        let pipeline = vec![
+            doc! { "$match": filtre },
+            doc! { "$project": {"heure": 1, "avg": 1, "min": 1, "max": 1} },
+            doc! { "$sort": {"heure": 1} }
+        ];
+
+        let mut reponse = Vec::new();
+        let mut result = collection.aggregate(pipeline, None).await?;
+        while let Some(d) = result.next().await {
+            let row: ResultatStatistiquesSenseurRow = convertir_bson_deserializable(d?)?;
+            reponse.push(row);
+        }
+
+        reponse
+    };
+
+    let periode31j = "31j";
+
+    let reponse = json!({
+        "ok": true,
+        "periode72h": periode72h,
+        "periode31j": periode31j,
+    });
+
+    debug!("requete_get_statistiques_senseur Reponse : {:?}", reponse);
 
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
