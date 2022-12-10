@@ -1,11 +1,11 @@
 use std::error::Error;
 use log::{debug, error};
-use millegrilles_common_rust::bson::{bson, doc};
+use millegrilles_common_rust::bson::{bson, DateTime, doc};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::chrono;
-use millegrilles_common_rust::chrono::Utc;
+use millegrilles_common_rust::chrono::{Timelike, Utc};
 use millegrilles_common_rust::formatteur_messages::MessageMilleGrille;
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
@@ -477,7 +477,39 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAct
         reponse
     };
 
-    let periode31j = "31j";
+    let periode31j = {
+        let min_date = Utc::now() - chrono::Duration::days(31);
+        let min_date = jour_juste(&min_date);
+
+        let filtre = doc! {
+            "user_id": &user_id,
+            "uuid_appareil": &requete.uuid_appareil,
+            "senseur_id": &requete.senseur_id,
+            "heure": {"$gte": min_date.timestamp()}
+        };
+
+        let pipeline = vec![
+            doc! { "$match": filtre },
+            doc! { "$project": {"heure": 1, "avg": 1, "min": 1, "max": 1} },
+            doc! { "$group": {
+                "_id": { "$dateToString": { "format": "%Y-%m-%d", "date": {"$toDate": {"$multiply": ["$heure", 1000]}} } },
+                "heure": {"$min": "$heure"},
+                "avg": {"$avg": "$avg"},
+                "min": {"$min": "$min"},
+                "max": {"$max": "$max"},
+            } },
+            doc! { "$sort": {"heure": 1} }
+        ];
+
+        let mut reponse = Vec::new();
+        let mut result = collection.aggregate(pipeline, None).await?;
+        while let Some(d) = result.next().await {
+            let row: ResultatStatistiquesSenseurRow = convertir_bson_deserializable(d?)?;
+            reponse.push(row);
+        }
+
+        reponse
+    };
 
     let reponse = json!({
         "ok": true,
@@ -488,4 +520,11 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAct
     debug!("requete_get_statistiques_senseur Reponse : {:?}", reponse);
 
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+fn jour_juste(date: &chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+    date.with_hour(0).expect("with_minutes")
+        .with_minute(0).expect("with_minutes")
+        .with_second(0).expect("with_seconds")
+        .with_nanosecond(0).expect("with_nanosecond")
 }
