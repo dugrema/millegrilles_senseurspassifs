@@ -8,6 +8,7 @@ use millegrilles_common_rust::bson::{DateTime, doc, Document};
 use millegrilles_common_rust::certificats::{calculer_fingerprint, charger_certificat, ValidateurX509, VerificateurPermissions};
 // use millegrilles_common_rust::chiffrage_cle::CommandeSauvegarderCle;
 use millegrilles_common_rust::{chrono, chrono::Utc};
+use millegrilles_common_rust::chrono::Timelike;
 use millegrilles_common_rust::configuration::ConfigMessages;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::domaines::GestionnaireDomaine;
@@ -34,6 +35,7 @@ use crate::transactions::aiguillage_transaction;
 
 const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
 const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
+const INDEX_LECTURES_HORAIRE: &str = "lectures_horaire";
 const INDEX_USER_APPAREILS: &str = "user_appareils";
 
 #[derive(Clone, Debug)]
@@ -288,6 +290,24 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         Some(options_lectures_noeud)
     ).await?;
 
+    // Lectures horaire
+    let options_senseurs_horaires = IndexOptions {
+        nom_index: Some(String::from(INDEX_LECTURES_HORAIRE)),
+        unique: true
+    };
+    let champs_index_senseurs_horaire = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_UUID_APPAREIL), direction: 1},
+        ChampIndex {nom_champ: String::from("senseur_id"), direction: 1},
+        ChampIndex {nom_champ: String::from("heure"), direction: 1},
+    );
+    middleware.create_index(
+        middleware,
+        COLLECTIONS_SENSEURS_HORAIRE,
+        champs_index_senseurs_horaire,
+        Some(options_senseurs_horaires)
+    ).await?;
+
     Ok(())
 }
 
@@ -300,14 +320,19 @@ pub async fn entretien<M>(_middleware: Arc<M>)
     }
 }
 
-pub async fn traiter_cedule<M>(middleware: &M, _trigger: &MessageCedule) -> Result<(), Box<dyn Error>>
+pub async fn traiter_cedule<M>(middleware: &M, trigger: &MessageCedule) -> Result<(), Box<dyn Error>>
 where M: Middleware + 'static {
     // let message = trigger.message;
 
     debug!("Traiter cedule {}", DOMAINE_NOM);
 
-    if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
-        error!("traiter_cedule Erreur generer_transactions : {:?}", e);
+    let minute = trigger.get_date().get_datetime().minute();
+
+    if minute == 7 {
+        // Faire l'aggretation des lectures 10 minutes apres l'heure
+        if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
+            error!("traiter_cedule Erreur generer_transactions : {:?}", e);
+        }
     }
 
     Ok(())

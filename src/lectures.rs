@@ -278,7 +278,8 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result
 async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> Result<(), Box<dyn Error>>
     where M: GenerateurMessages
 {
-    let heure_courante = heure_juste(&Utc::now());
+    let temps_delai = Utc::now() - chrono::Duration::minutes(5);
+    let heure_courante = heure_juste(&temps_delai);
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
         heure_courante, lectures.user_id, lectures.uuid_appareil, lectures.senseur_id);
 

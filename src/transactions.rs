@@ -553,7 +553,7 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
         "senseur_id": &transaction_convertie.senseur_id,
     };
     let ops = doc! {
-        "$set": {"derniere_aggregation": heure_max.timestamp()},
+        "$set": {"derniere_aggregation": heure_max},
         "$pull": {"lectures": {"timestamp": {"$gte": &transaction_convertie.heure.get_datetime().timestamp(), "$lt": heure_max.timestamp()}}},
         "$currentDate": {CHAMP_MODIFICATION: true},
     };
