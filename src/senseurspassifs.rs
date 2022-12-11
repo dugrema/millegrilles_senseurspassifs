@@ -27,6 +27,7 @@ use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::transactions::{TraiterTransaction, Transaction, TransactionImpl};
 use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson, convertir_bson_value, filtrer_doc_id, convertir_to_bson_array};
+use millegrilles_common_rust::mongodb::Collection;
 
 use crate::requetes::consommer_requete;
 use crate::common::*;
@@ -505,6 +506,18 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
 
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
+    let mut renouvellement = false;
+    if let Some(csr) = commande.csr.as_ref() {
+        if let Some(certificat) = m.message.certificat.as_ref() {
+            if let Some(cn) = certificat.subject()?.get("commonName") {
+                if commande.uuid_appareil.as_str() == cn.as_str() {
+                    debug!("Renouvellement d'un certificat d'appareil valide pour {}", cn);
+                    renouvellement = true;
+                }
+            }
+        }
+    }
+
     let filtre_appareil = doc! {
         "uuid_appareil": &commande.uuid_appareil,
         "user_id": &user_id,
@@ -524,68 +537,12 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
         }
     };
 
-    let certificat = match doc_appareil.certificat {
-        Some(c) => c,
-        None => {
-            let csr = match doc_appareil.csr {
-                Some(c) => c,
-                None => {
-                    let reponse = json!({"ok": false, "err": "csr absent"});
-                    return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
-                }
-            };
-            debug!("commande_signer_appareil Aucun certificat, faire demande de signature");
-            let routage = RoutageMessageAction::builder("CorePki", "signerCsr")
-                .exchanges(vec![Securite::L3Protege])
-                .build();
-            let requete = json!({
-                "csr": csr,  // &doc_appareil.csr,
-                "roles": ["senseurspassifs"],
-                "user_id": user_id,
-            });
-            debug!("Requete demande signer appareil : {:?}", requete);
-            let reponse: ReponseCertificat = match middleware.transmettre_commande(routage, &requete, true).await? {
-                Some(r) => match r {
-                    TypeMessage::Valide(m) => m.message.parsed.map_contenu(None)?,
-                    _ => {
-                        let reponse = json!({"ok": false, "err": "Reponse certissuer invalide"});
-                        return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
-                    }
-                },
-                None => {
-                    let reponse = json!({"ok": false, "err": "Aucune reponse"});
-                    return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
-                }
-            };
-
-            debug!("Reponse : {:?}", reponse);
-            if let Some(true) = reponse.ok {
-
-                let (certificat, fingerprint) = match &reponse.certificat {
-                    Some(c) => {
-                        let cert_x509 = charger_certificat(c[0].as_str());
-                        (c.to_owned(), calculer_fingerprint(&cert_x509)?)
-                    },
-                    None => {
-                        let reponse = json!({"ok": false, "err": "Reponse serveur incorrect (cert)"});
-                        return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
-                    }
-                };
-
-                let ops = doc! {
-                    "$set": {
-                        "certificat": &reponse.certificat,
-                        "fingerprint": fingerprint,
-                    },
-                    "$unset": {"csr": true},
-                    "$currentDate": {CHAMP_MODIFICATION: true},
-                };
-                collection.update_one(filtre_appareil, ops, None).await?;
-
-                certificat  // Retourner certificat via reponse
-            } else {
-                let reponse = json!({"ok": false, "err": "Reponse serveur incorrect (ok=false)"});
-                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+    let certificat = match renouvellement {
+        true => signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil, commande.csr.as_ref()).await?,
+        false => match doc_appareil.certificat {
+            Some(c) => c,
+            None => {
+                signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil, None).await?
             }
         }
     };
@@ -597,6 +554,73 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
     });
 
     Ok(Some(middleware.formatter_reponse(reponse, None)?))
+}
+
+async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Document, doc_appareil: DocAppareil, csr_inclus: Option<&String>)
+    -> Result<Vec<String>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage
+{
+    let csr = match csr_inclus {
+        Some(c) => c.to_owned(),
+        None => match doc_appareil.csr {
+            Some(c) => c,
+            None => {
+                Err(format!("senseurspassifs.signer_certificat CSR absent"))?
+            }
+        }
+    };
+
+    debug!("signer_certificat Aucun certificat, faire demande de signature");
+    let routage = RoutageMessageAction::builder("CorePki", "signerCsr")
+        .exchanges(vec![Securite::L3Protege])
+        .build();
+    let requete = json!({
+        "csr": csr,  // &doc_appareil.csr,
+        "roles": ["senseurspassifs"],
+        "user_id": user_id,
+    });
+
+    debug!("signer_certificat Requete demande signer appareil : {:?}", requete);
+    let reponse: ReponseCertificat = match middleware.transmettre_commande(routage, &requete, true).await? {
+        Some(r) => match r {
+            TypeMessage::Valide(m) => m.message.parsed.map_contenu(None)?,
+            _ => {
+                Err(format!("senseurspassifs.signer_certificat Reponse certissuer invalide"))?
+            }
+        },
+        None => {
+            Err(format!("senseurspassifs.signer_certificat Aucune reponse"))?
+        }
+    };
+
+    debug!("signer_certificat Reponse : {:?}", reponse);
+    if let Some(true) = reponse.ok {
+        let (certificat, fingerprint) = match &reponse.certificat {
+            Some(c) => {
+                let cert_x509 = charger_certificat(c[0].as_str());
+                (c.to_owned(), calculer_fingerprint(&cert_x509)?)
+            },
+            None => {
+                Err(format!("senseurspassifs.signer_certificat Reponse serveur incorrect (cert)"))?
+            }
+        };
+
+        let ops = doc! {
+            "$set": {
+                "certificat": &reponse.certificat,
+                "fingerprint": fingerprint,
+            },
+            "$unset": {"csr": true},
+            "$currentDate": {CHAMP_MODIFICATION: true},
+        };
+
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+        collection.update_one(filtre_appareil, ops, None).await?;
+
+        Ok(certificat)  // Retourner certificat via reponse
+    } else {
+        Err(format!("senseurspassifs.signer_certificat Reponse serveur incorrect (ok=false)"))?
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -617,6 +641,7 @@ struct CommandeInscrireAppareil {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CommandeSignerAppareil {
     uuid_appareil: String,
+    csr: Option<String>,
 }
 
 async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
