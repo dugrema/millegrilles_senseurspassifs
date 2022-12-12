@@ -338,7 +338,7 @@ where
     // Autorisation : doit etre de niveau 2.prive, 3.protege ou 4.secure
     match m.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
         true => Ok(()),
-        false => Err(format!("senseurspassifs.consommer_evenement: Evenement invalide (pas 3.protege ou 4.secure)")),
+        false => Err(format!("senseurspassifs.consommer_evenement: Evenement invalide (pas 2.prive, 3.protege ou 4.secure)")),
     }?;
 
     match m.action.as_str() {
