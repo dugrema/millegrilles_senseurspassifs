@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::Duration;
@@ -17,6 +18,7 @@ use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::serde_json::Value;
 use millegrilles_common_rust::tokio_stream::StreamExt;
+use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
 
 use crate::common::*;
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
@@ -326,9 +328,12 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
         // Calcul de moyenne
         let mut val_somme: f64 = 0.0;
         let mut compte_valeurs: u32 = 0;
+        let mut fract_max: u8 = 0 ;  // Nombre de digits dans partie fractionnaire (pour round avg)
 
         for lecture in &lectures.lectures {
             if let Some(valeur) = lecture.valeur {
+
+                fract_max = max(fract_max, compter_fract_digits(valeur));
 
                 // Calcul moyenne
                 compte_valeurs += 1;
@@ -357,7 +362,8 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
         }
 
         let moyenne = if compte_valeurs > 0 {
-            Some(val_somme / compte_valeurs as f64)
+            let moyenne = val_somme / compte_valeurs as f64;
+            Some(arrondir(moyenne, fract_max as i32))
         } else {
             None
         };

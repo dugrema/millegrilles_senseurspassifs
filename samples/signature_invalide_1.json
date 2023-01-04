@@ -1,0 +1,281 @@
+{
+  "_certificat": [
+    "-----BEGIN CERTIFICATE-----\\nMIICZDCCAhagAwIBAgIUQQEEcaO6q7KPFG1xP3VtHjPo7gkwBQYDK2VwMHIxLTAr\\nBgNVBAMTJGM1NTE2ODRkLTc4N2YtNDNmYy05ZjJjLWRiNGFiMmM2ZGQ3NTFBMD8G\\nA1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6\\nWHJwMjJiQXR3R203SmYwHhcNMjMwMTA0MTM0MjEyWhcNMjMwMjA0MTM0MjMyWjCB\\njDEtMCsGA1UEAwwkYzU1MTY4NGQtNzg3Zi00M2ZjLTlmMmMtZGI0YWIyYzZkZDc1\\nMRgwFgYDVQQLDA9zZW5zZXVyc3Bhc3NpZnMxQTA/BgNVBAoMOHplWW5jUnFFcVo2\\nZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhycDIyYkF0d0dtN0pmMCow\\nBQYDK2VwAyEAwJJh4+TE6gq4xc2QqSx0sqwhyBa4EhJuErPz6UAJLQmjgaIwgZ8w\\nKwYEKgMEAAQjNC5zZWN1cmUsMy5wcm90ZWdlLDIucHJpdmUsMS5wdWJsaWMwFwYE\\nKgMEAQQPc2Vuc2V1cnNwYXNzaWZzMBcGBCoDBAIED1NlbnNldXJzUGFzc2lmczAf\\nBgNVHSMEGDAWgBRHjT6DcEgMWcWbXCWfMpeuUWMwLzAdBgNVHQ4EFgQU66DGA96D\\n4/HSMDsoQpCtLX3kDSYwBQYDK2VwA0EA2rR9TmemOwDHfEv9UXsob2ypcOdphTGy\\nXgFcRo5gKH8POZzCiYKuaE8abGnI4P7ZgWT/Ky3Drdn50lCQEW01AA==\\n-----END CERTIFICATE-----\\n",
+    "-----BEGIN CERTIFICATE-----\\nMIIBozCCAVWgAwIBAgIKA2eGMGBSlYWZMTAFBgMrZXAwFjEUMBIGA1UEAxMLTWls\\nbGVHcmlsbGUwHhcNMjIxMjA4MjIzOTIwWhcNMjQwNjE4MjIzOTIwWjByMS0wKwYD\\nVQQDEyRjNTUxNjg0ZC03ODdmLTQzZmMtOWYyYy1kYjRhYjJjNmRkNzUxQTA/BgNV\\nBAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy\\ncDIyYkF0d0dtN0pmMCowBQYDK2VwAyEAw9Ad50QMyE9X0vAtFHGICKRyyu7j3wuO\\nnUaC4bwwQo+jYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G\\nA1UdDgQWBBRHjT6DcEgMWcWbXCWfMpeuUWMwLzAfBgNVHSMEGDAWgBTTiP/MFw4D\\nDwXqQ/J2LLYPRUkkETAFBgMrZXADQQC1NpJptK9fZxNaVWl2hPzeoDi6CsohWbQ6\\neBciqksWvE8o+S8PIqHzHhbQsXMsqDGerlWCXi0yzsg618gPBK0B\\n-----END CERTIFICATE-----\\n"
+  ],
+  "_signature": "mAscUM3yU8rgarc395Mq0rY6uzEXxQDuXQk12DFqkIp+duCkEMryPXG8Ke5O9jY8q7BiOnYYstw6hvixYXEfSMAk",
+  "avg": 100.89384313725489,
+  "en-tete": {
+    "action": "senseurHoraire",
+    "domaine": "SenseursPassifs",
+    "estampille": 1672858502,
+    "fingerprint_certificat": "z2i3XjxKEzSLur1NnpoAaSVtm848REihLt9uCJiiX28NSXVBVsF",
+    "hachage_contenu": "mEiCwBPHx+aeSLVRsdQS6Yh3JZy8PhmhFsL1lYlnUnmd77A",
+    "idmg": "zeYncRqEqZ6eTEmUZ8whJFuHG796eSvCTWE4M432izXrp22bAtwGm7Jf",
+    "uuid_transaction": "86cfe76a-1481-4431-9a77-9029e529ce5f",
+    "version": 1
+  },
+  "heure": 1672848000,
+  "lectures": [
+    {
+      "timestamp": 1672848027,
+      "type": "pression",
+      "valeur": 100.954
+    },
+    {
+      "timestamp": 1672848050,
+      "type": "pression",
+      "valeur": 100.957
+    },
+    {
+      "timestamp": 1672848137,
+      "type": "pression",
+      "valeur": 100.946
+    },
+    {
+      "timestamp": 1672848146,
+      "type": "pression",
+      "valeur": 100.946
+    },
+    {
+      "timestamp": 1672848173,
+      "type": "pression",
+      "valeur": 100.942
+    },
+    {
+      "timestamp": 1672848196,
+      "type": "pression",
+      "valeur": 100.941
+    },
+    {
+      "timestamp": 1672848226,
+      "type": "pression",
+      "valeur": 100.93
+    },
+    {
+      "timestamp": 1672848249,
+      "type": "pression",
+      "valeur": 100.924
+    },
+    {
+      "timestamp": 1672848279,
+      "type": "pression",
+      "valeur": 100.923
+    },
+    {
+      "timestamp": 1672848302,
+      "type": "pression",
+      "valeur": 100.919
+    },
+    {
+      "timestamp": 1672848332,
+      "type": "pression",
+      "valeur": 100.915
+    },
+    {
+      "timestamp": 1672848356,
+      "type": "pression",
+      "valeur": 100.907
+    },
+    {
+      "timestamp": 1672848384,
+      "type": "pression",
+      "valeur": 100.909
+    },
+    {
+      "timestamp": 1672848408,
+      "type": "pression",
+      "valeur": 100.908
+    },
+    {
+      "timestamp": 1672848437,
+      "type": "pression",
+      "valeur": 100.911
+    },
+    {
+      "timestamp": 1672848460,
+      "type": "pression",
+      "valeur": 100.909
+    },
+    {
+      "timestamp": 1672848489,
+      "type": "pression",
+      "valeur": 100.911
+    },
+    {
+      "timestamp": 1672848512,
+      "type": "pression",
+      "valeur": 100.907
+    },
+    {
+      "timestamp": 1672848542,
+      "type": "pression",
+      "valeur": 100.914
+    },
+    {
+      "timestamp": 1672849883,
+      "type": "pression",
+      "valeur": 100.908
+    },
+    {
+      "timestamp": 1672849912,
+      "type": "pression",
+      "valeur": 100.908
+    },
+    {
+      "timestamp": 1672849935,
+      "type": "pression",
+      "valeur": 100.903
+    },
+    {
+      "timestamp": 1672849964,
+      "type": "pression",
+      "valeur": 100.902
+    },
+    {
+      "timestamp": 1672849987,
+      "type": "pression",
+      "valeur": 100.899
+    },
+    {
+      "timestamp": 1672850016,
+      "type": "pression",
+      "valeur": 100.896
+    },
+    {
+      "timestamp": 1672850039,
+      "type": "pression",
+      "valeur": 100.9
+    },
+    {
+      "timestamp": 1672850068,
+      "type": "pression",
+      "valeur": 100.896
+    },
+    {
+      "timestamp": 1672850091,
+      "type": "pression",
+      "valeur": 100.891
+    },
+    {
+      "timestamp": 1672850795,
+      "type": "pression",
+      "valeur": 100.865
+    },
+    {
+      "timestamp": 1672850818,
+      "type": "pression",
+      "valeur": 100.868
+    },
+    {
+      "timestamp": 1672850847,
+      "type": "pression",
+      "valeur": 100.874
+    },
+    {
+      "timestamp": 1672850871,
+      "type": "pression",
+      "valeur": 100.868
+    },
+    {
+      "timestamp": 1672850902,
+      "type": "pression",
+      "valeur": 100.872
+    },
+    {
+      "timestamp": 1672850938,
+      "type": "pression",
+      "valeur": 100.872
+    },
+    {
+      "timestamp": 1672850970,
+      "type": "pression",
+      "valeur": 100.874
+    },
+    {
+      "timestamp": 1672850998,
+      "type": "pression",
+      "valeur": 100.865
+    },
+    {
+      "timestamp": 1672851022,
+      "type": "pression",
+      "valeur": 100.871
+    },
+    {
+      "timestamp": 1672851050,
+      "type": "pression",
+      "valeur": 100.86
+    },
+    {
+      "timestamp": 1672851073,
+      "type": "pression",
+      "valeur": 100.868
+    },
+    {
+      "timestamp": 1672851102,
+      "type": "pression",
+      "valeur": 100.863
+    },
+    {
+      "timestamp": 1672851125,
+      "type": "pression",
+      "valeur": 100.859
+    },
+    {
+      "timestamp": 1672851154,
+      "type": "pression",
+      "valeur": 100.863
+    },
+    {
+      "timestamp": 1672851178,
+      "type": "pression",
+      "valeur": 100.859
+    },
+    {
+      "timestamp": 1672851416,
+      "type": "pression",
+      "valeur": 100.862
+    },
+    {
+      "timestamp": 1672851440,
+      "type": "pression",
+      "valeur": 100.861
+    },
+    {
+      "timestamp": 1672851468,
+      "type": "pression",
+      "valeur": 100.857
+    },
+    {
+      "timestamp": 1672851492,
+      "type": "pression",
+      "valeur": 100.869
+    },
+    {
+      "timestamp": 1672851520,
+      "type": "pression",
+      "valeur": 100.868
+    },
+    {
+      "timestamp": 1672851544,
+      "type": "pression",
+      "valeur": 100.865
+    },
+    {
+      "timestamp": 1672851572,
+      "type": "pression",
+      "valeur": 100.864
+    },
+    {
+      "timestamp": 1672851595,
+      "type": "pression",
+      "valeur": 100.863
+    }
+  ],
+  "max": 100.957,
+  "min": 100.857,
+  "senseur_id": "bmp180/pression",
+  "user_id": "z2i3Xjx83MSb5eEAJPN4ZC35bYjceHCHsiuee34zLqzbHCXBuQY",
+  "uuid_appareil": "rpi-pico-e6614104033e722b"
+}
