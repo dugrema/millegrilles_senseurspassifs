@@ -180,9 +180,13 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
 
         match doc_senseur {
             Some(d) => {
-                let info_senseur: InformationAppareil = convertir_bson_deserializable(d)?;
-                debug!("Chargement info senseur pour evenement confirmation : {:?}", info_senseur);
-                info_senseur
+                match convertir_bson_deserializable::<InformationAppareil>(d) {
+                    Ok(info_senseur) => {
+                        debug!("Chargement info senseur pour evenement confirmation : {:?}", info_senseur);
+                        info_senseur
+                    },
+                    Err(e) => Err(format!("lectures.evenement_domaine_lecture Erreur mapping InformationAppareil : {:?}", e))?
+                }
             },
             None => Err(format!("Erreur chargement senseur a partir de mongo, aucun match sur {}", &lecture.uuid_appareil))?
         }
