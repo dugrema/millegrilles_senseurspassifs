@@ -37,6 +37,7 @@ use crate::transactions::aiguillage_transaction;
 const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
 const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
 const INDEX_LECTURES_HORAIRE: &str = "lectures_horaire";
+const INDEX_LECTURES_HORAIRE_RAPPORT: &str = "lectures_horaire_rapport";
 const INDEX_USER_APPAREILS: &str = "user_appareils";
 
 #[derive(Clone, Debug)]
@@ -221,19 +222,19 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
     where M: MongoDao + ConfigMessages
 {
     // Index senseurs
-    let options_lectures_noeud = IndexOptions {
-        nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
-        unique: false
-    };
-    let champs_index_lectures_noeud = vec!(
-        ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
-    );
-    middleware.create_index(
-        middleware,
-        COLLECTIONS_LECTURES,
-        champs_index_lectures_noeud,
-        Some(options_lectures_noeud)
-    ).await?;
+    // let options_lectures_noeud = IndexOptions {
+    //     nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
+    //     unique: false
+    // };
+    // let champs_index_lectures_noeud = vec!(
+    //     ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
+    // );
+    // middleware.create_index(
+    //     middleware,
+    //     COLLECTIONS_LECTURES,
+    //     champs_index_lectures_noeud,
+    //     Some(options_lectures_noeud)
+    // ).await?;
 
     let options_appareils = IndexOptions {
         nom_index: Some(String::from(INDEX_USER_APPAREILS)),
@@ -300,6 +301,21 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         Some(options_senseurs_horaires)
     ).await?;
 
+    // Lectures horaire
+    let options_senseurs_horaires_rapport = IndexOptions {
+        nom_index: Some(String::from(INDEX_LECTURES_HORAIRE_RAPPORT)),
+        unique: false
+    };
+    let champs_index_senseurs_horaire_rapport = vec!(
+        ChampIndex {nom_champ: String::from("heure"), direction: 1},
+    );
+    middleware.create_index(
+        middleware,
+        COLLECTIONS_LECTURES,
+        champs_index_senseurs_horaire_rapport,
+        Some(options_senseurs_horaires_rapport)
+    ).await?;
+
     Ok(())
 }
 
@@ -320,12 +336,12 @@ where M: Middleware + 'static {
 
     let minute = trigger.get_date().get_datetime().minute();
 
-    if minute % 5 == 4 {
+    // if minute % 5 == 4 {
         // Faire l'aggretation des lectures toutes les 5 minutes (offset 4 minutes apres l'heure)
         if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
             error!("traiter_cedule Erreur generer_transactions : {:?}", e);
         }
-    }
+    //}
 
     Ok(())
 }

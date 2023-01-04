@@ -4,17 +4,18 @@ use std::time::Duration;
 use log::{debug, error, warn};
 use millegrilles_common_rust::bson::{DateTime as BsonDateTime, doc};
 use millegrilles_common_rust::certificats::ValidateurX509;
-use millegrilles_common_rust::chrono;
+use millegrilles_common_rust::{chrono, serde_json};
 use millegrilles_common_rust::chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use millegrilles_common_rust::constantes::Securite;
 use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array, MongoDao};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array, convertir_value_mongodate, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneOptions, UpdateOptions};
 use millegrilles_common_rust::recepteur_messages::MessageValideAction;
 use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::serde_json::Value;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 
 use crate::common::*;
@@ -255,7 +256,7 @@ async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) ->
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LecturesCumulees {
     user_id: String,
-    heure: DateEpochSeconds,
+    heure: Value,
     uuid_appareil: String,
     senseur_id: String,
     lectures: Vec<LectureSenseur>,
@@ -269,13 +270,12 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result
 
     let filtre = doc! {
         "heure": {"$lte": date_aggregation},
-        "lectures": {"$not": {"$size": 0}},
     };
 
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
     let mut curseur = collection.find(filtre, None).await?;
     while let Some(d) = curseur.next().await {
-        match convertir_bson_deserializable(d?) {
+        match convertir_bson_deserializable::<LecturesCumulees>(d?) {
             Ok(l) => generer_transactions(middleware, l).await?,
             Err(e) => {
                 error!("lectures.generer_transactions_lectures_horaires Erreur mapping LecturesCumulees : {:?}", e);
@@ -291,6 +291,11 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
 {
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
         lectures.heure, lectures.user_id, lectures.uuid_appareil, lectures.senseur_id);
+
+    let heure = lectures.heure;
+    debug!("Heure : {:?}", heure);
+
+    let heure = convertir_value_mongodate(heure)?;
 
     // On ne traite pas les donnees de l'heure courante.
     // let mut donnees_lectures: Vec<LectureSenseur> = lectures.lectures.into_iter()
@@ -358,7 +363,7 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
         };
 
         let transaction = TransactionLectureHoraire {
-            heure: lectures.heure,
+            heure,
             user_id: lectures.user_id,
             uuid_appareil: lectures.uuid_appareil,
             senseur_id: lectures.senseur_id,

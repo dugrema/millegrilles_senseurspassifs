@@ -1,5 +1,5 @@
 use std::error::Error;
-use log::{debug, error};
+use log::{debug, error, info};
 use millegrilles_common_rust::bson::{bson, DateTime, doc};
 
 use millegrilles_common_rust::constantes::*;
@@ -98,7 +98,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
     let appareils = {
         let mut appareils = Vec::new();
 
-        let filtre = doc! { CHAMP_USER_ID: user_id };
+        let filtre = doc! { CHAMP_USER_ID: &user_id };
 
         let projection = doc! {
             CHAMP_UUID_APPAREIL: 1,
@@ -119,8 +119,13 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
         let mut curseur = collection.find(filtre, opts).await?;
 
         while let Some(d) = curseur.next().await {
-            let appareil: DocAppareil = convertir_bson_deserializable(d?)?;
-            appareils.push(appareil);
+            match convertir_bson_deserializable::<DocAppareil>(d?) {
+                Ok(a) => appareils.push(a),
+                Err(e) => {
+                    info!("Erreur mapping DocAppareil user_id {}", user_id);
+                    continue
+                }
+            }
         }
 
         appareils

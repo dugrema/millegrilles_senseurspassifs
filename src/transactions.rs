@@ -551,7 +551,7 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
         CHAMP_USER_ID: &transaction_convertie.user_id,
         CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
         "senseur_id": &transaction_convertie.senseur_id,
-        "heure": &transaction_convertie.heure,
+        "heure": transaction_convertie.heure.get_datetime(),
     };
     // let ops = doc! {
     //     "$set": {"derniere_aggregation": heure_max},
@@ -561,8 +561,11 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
     // debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
     debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}", filtre);
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-    if let Err(e) = collection.delete_one(filtre, None).await {
-        warn!("transactions.transaction_senseur_horaire Erreur suppression lectures {:?}", e);
+    match collection.delete_one(filtre, None).await {
+        Ok(r) => {
+            debug!("transactions.transaction_senseur_horaire Resultat suppression lectures archivess : {:?}", r);
+        }
+        Err(e) => warn!("transactions.transaction_senseur_horaire Erreur suppression lectures {:?}", e)
     }
     // match collection.update_many(filtre, ops, None).await {
     //     Ok(result) => {
