@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::Duration;
-use log::{debug, warn};
+use log::{debug, error, warn};
 use millegrilles_common_rust::bson::{DateTime as BsonDateTime, doc};
 use millegrilles_common_rust::certificats::ValidateurX509;
 use millegrilles_common_rust::chrono;
@@ -218,10 +218,13 @@ async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) ->
 
     for (senseur_id, valeur) in &lecture.lectures_senseurs {
 
+        let heure = heure_juste(valeur.timestamp.get_datetime());
+
         let filtre = doc!{
             CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
             "senseur_id": senseur_id,
             "user_id": lecture.user_id.as_str(),
+            "heure": &heure,
         };
 
         let now = Utc::now();
@@ -231,7 +234,7 @@ async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) ->
             CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
             "senseur_id": senseur_id,
             "user_id": lecture.user_id.as_str(),
-            "derniere_aggregation": &now,
+            "heure": heure,
         };
 
         let ops = doc! {
@@ -251,8 +254,8 @@ async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) ->
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LecturesCumulees {
-    derniere_aggregation: BsonDateTime,
     user_id: String,
+    heure: DateEpochSeconds,
     uuid_appareil: String,
     senseur_id: String,
     lectures: Vec<LectureSenseur>,
@@ -265,15 +268,19 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result
     let date_aggregation = Utc::now() - chrono::Duration::minutes(65);
 
     let filtre = doc! {
-        "derniere_aggregation": {"$lte": date_aggregation},
+        "heure": {"$lte": date_aggregation},
         "lectures": {"$not": {"$size": 0}},
     };
 
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
     let mut curseur = collection.find(filtre, None).await?;
     while let Some(d) = curseur.next().await {
-        let lectures: LecturesCumulees = convertir_bson_deserializable(d?)?;
-        generer_transactions(middleware, lectures).await?;
+        match convertir_bson_deserializable(d?) {
+            Ok(l) => generer_transactions(middleware, l).await?,
+            Err(e) => {
+                error!("lectures.generer_transactions_lectures_horaires Erreur mapping LecturesCumulees : {:?}", e);
+            }
+        }
     }
 
     Ok(())
@@ -282,34 +289,32 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result
 async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> Result<(), Box<dyn Error>>
     where M: GenerateurMessages
 {
-    let temps_delai = Utc::now() - chrono::Duration::minutes(5);
-    let heure_courante = heure_juste(&temps_delai);
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
-        heure_courante, lectures.user_id, lectures.uuid_appareil, lectures.senseur_id);
+        lectures.heure, lectures.user_id, lectures.uuid_appareil, lectures.senseur_id);
 
     // On ne traite pas les donnees de l'heure courante.
-    let mut donnees_lectures: Vec<LectureSenseur> = lectures.lectures.into_iter()
-        .filter(|l| l.timestamp.get_datetime() < &heure_courante)
-        .collect();
+    // let mut donnees_lectures: Vec<LectureSenseur> = lectures.lectures.into_iter()
+    //     .filter(|l| l.timestamp.get_datetime() < &heure_courante)
+    //     .collect();
 
-    let mut groupes_heures = HashMap::new();
-    for lecture in donnees_lectures.into_iter() {
-        let heure = heure_juste(lecture.timestamp.get_datetime()).timestamp();
-        let mut groupe_heure = match groupes_heures.get_mut(&heure) {
-            Some(g) => g,
-            None => {
-                groupes_heures.insert(heure, vec![]);
-                groupes_heures.get_mut(&heure).expect("get")
-            }
-        };
-        groupe_heure.push(lecture);
-    }
+    // let mut groupes_heures = HashMap::new();
+    // for lecture in donnees_lectures.into_iter() {
+    //     let heure = heure_juste(lecture.timestamp.get_datetime()).timestamp();
+    //     let mut groupe_heure = match groupes_heures.get_mut(&heure) {
+    //         Some(g) => g,
+    //         None => {
+    //             groupes_heures.insert(heure, vec![]);
+    //             groupes_heures.get_mut(&heure).expect("get")
+    //         }
+    //     };
+    //     groupe_heure.push(lecture);
+    // }
 
     // Generer transactions pour chaque heure
-    for (heure, groupe) in groupes_heures {
-        let heure_dt = DateEpochSeconds::from_i64(heure);
-        let heure_max = heure_dt.get_datetime().to_owned() + chrono::Duration::hours(1);
-        debug!("Generer transactions pour heure {:?} (< {:?})", heure_dt.get_datetime(), heure_max);
+    // for (heure, groupe) in groupes_heures {
+        // let heure_dt = DateEpochSeconds::from_i64(heure);
+        // let heure_max = lectures.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
+        // debug!("Generer transactions pour heure {:?} (< {:?})", lectures.heure, heure_max);
 
         let mut val_max: Option<f64> = None;
         let mut val_min: Option<f64> = None;
@@ -317,7 +322,7 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
         let mut val_somme: f64 = 0.0;
         let mut compte_valeurs: u32 = 0;
 
-        for lecture in &groupe {
+        for lecture in &lectures.lectures {
             if let Some(valeur) = lecture.valeur {
 
                 // Calcul moyenne
@@ -353,11 +358,11 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
         };
 
         let transaction = TransactionLectureHoraire {
-            heure: heure_dt,
-            user_id: lectures.user_id.clone(),
-            uuid_appareil: lectures.uuid_appareil.clone(),
-            senseur_id: lectures.senseur_id.clone(),
-            lectures: groupe,
+            heure: lectures.heure,
+            user_id: lectures.user_id,
+            uuid_appareil: lectures.uuid_appareil,
+            senseur_id: lectures.senseur_id,
+            lectures: lectures.lectures,
             min: val_min,
             max: val_max,
             avg: moyenne
@@ -369,7 +374,7 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
 
         debug!("Soumettre transaction : {:?}", transaction);
         middleware.soumettre_transaction(routage, &transaction, false).await?;
-    }
+    // }
 
     Ok(())
 }

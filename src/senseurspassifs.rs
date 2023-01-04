@@ -258,6 +258,7 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
         ChampIndex {nom_champ: String::from(CHAMP_UUID_APPAREIL), direction: 1},
         ChampIndex {nom_champ: String::from("senseur_id"), direction: 1},
+        ChampIndex {nom_champ: String::from("heure"), direction: 1},
     );
     middleware.create_index(
         middleware,
@@ -266,20 +267,20 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         Some(options_lectures_senseurs)
     ).await?;
 
-    // Index noeuds
-    let options_lectures_noeud = IndexOptions {
-        nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
-        unique: true
-    };
-    let champs_index_lectures_noeud = vec!(
-        ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
-    );
-    middleware.create_index(
-        middleware,
-        COLLECTIONS_INSTANCES,
-        champs_index_lectures_noeud,
-        Some(options_lectures_noeud)
-    ).await?;
+    // // Index noeuds
+    // let options_lectures_noeud = IndexOptions {
+    //     nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
+    //     unique: true
+    // };
+    // let champs_index_lectures_noeud = vec!(
+    //     ChampIndex {nom_champ: String::from(CHAMP_INSTANCE_ID), direction: 1},
+    // );
+    // middleware.create_index(
+    //     middleware,
+    //     COLLECTIONS_INSTANCES,
+    //     champs_index_lectures_noeud,
+    //     Some(options_lectures_noeud)
+    // ).await?;
 
     // Lectures horaire
     let options_senseurs_horaires = IndexOptions {
@@ -319,8 +320,8 @@ where M: Middleware + 'static {
 
     let minute = trigger.get_date().get_datetime().minute();
 
-    if minute == 7 {
-        // Faire l'aggretation des lectures 10 minutes apres l'heure
+    if minute % 5 == 4 {
+        // Faire l'aggretation des lectures toutes les 5 minutes (offset 4 minutes apres l'heure)
         if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
             error!("traiter_cedule Erreur generer_transactions : {:?}", e);
         }

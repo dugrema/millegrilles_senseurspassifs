@@ -546,27 +546,32 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
     }
 
     // Cleanup table lectures
-    let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
+    // let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
     let filtre = doc! {
         CHAMP_USER_ID: &transaction_convertie.user_id,
         CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
         "senseur_id": &transaction_convertie.senseur_id,
+        "heure": &transaction_convertie.heure,
     };
-    let ops = doc! {
-        "$set": {"derniere_aggregation": heure_max},
-        "$pull": {"lectures": {"timestamp": {"$gte": &transaction_convertie.heure.get_datetime().timestamp(), "$lt": heure_max.timestamp()}}},
-        "$currentDate": {CHAMP_MODIFICATION: true},
-    };
-    debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
+    // let ops = doc! {
+    //     "$set": {"derniere_aggregation": heure_max},
+    //     "$pull": {"lectures": {"timestamp": {"$gte": &transaction_convertie.heure.get_datetime().timestamp(), "$lt": heure_max.timestamp()}}},
+    //     "$currentDate": {CHAMP_MODIFICATION: true},
+    // };
+    // debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
+    debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}", filtre);
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-    match collection.update_many(filtre, ops, None).await {
-        Ok(result) => {
-            if result.modified_count != 1 {
-                info!("transaction_senseur_horaire Aucune modification dans table lectures");
-            }
-        },
-        Err(e) => Err(format!("transactions.transaction_senseur_horaire Erreur update_many : {:?}", e))?
+    if let Err(e) = collection.delete_one(filtre, None).await {
+        warn!("transactions.transaction_senseur_horaire Erreur suppression lectures {:?}", e);
     }
+    // match collection.update_many(filtre, ops, None).await {
+    //     Ok(result) => {
+    //         if result.modified_count != 1 {
+    //             info!("transaction_senseur_horaire Aucune modification dans table lectures");
+    //         }
+    //     },
+    //     Err(e) => Err(format!("transactions.transaction_senseur_horaire Erreur update_many : {:?}", e))?
+    // }
 
     middleware.reponse_ok()
 }
