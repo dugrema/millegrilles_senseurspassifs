@@ -138,6 +138,7 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
     };
 
     let mut set_ops = doc! {
+        CHAMP_INSTANCE_ID: &instance_id,
         "derniere_lecture": &derniere_lecture,
         "derniere_lecture_dt": derniere_lecture_dt,
     };
@@ -155,7 +156,6 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
         "$set": set_ops,
         "$setOnInsert": {
             CHAMP_CREATION: Utc::now(),
-            CHAMP_INSTANCE_ID: &instance_id,
             CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
             "user_id": lecture.user_id.as_str(),
         },
