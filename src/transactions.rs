@@ -190,6 +190,13 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
             };
             set_ops.insert("configuration.displays", bson_map);
         }
+        if let Some(inner) = transaction_convertie.configuration.programmes {
+            let bson_map = match convertir_to_bson(inner) {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion programmes en bson : {:?}", e))?
+            };
+            set_ops.insert("configuration.programmes", bson_map);
+        }
 
         let ops = doc! {
             "$set": set_ops,

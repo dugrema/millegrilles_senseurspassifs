@@ -1558,7 +1558,7 @@ dependencies = [
 
 [[package]]
 name = "millegrilles_senseurspassifs"
-version = "2023.0.3"
+version = "2023.0.4"
 dependencies = [
  "env_logger",
  "log",

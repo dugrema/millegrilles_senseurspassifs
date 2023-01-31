@@ -118,6 +118,8 @@ pub struct DocAppareil {
     pub configuration: Option<ConfigurationAppareil>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub displays: Option<Vec<ParamsDisplay>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -154,7 +156,9 @@ pub struct ConfigurationAppareil {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptif_senseurs: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub displays: Option<HashMap<String, ParametresDisplay>>
+    pub displays: Option<HashMap<String, ParametresDisplay>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -170,6 +174,15 @@ pub struct ParametresDisplayLigne {
     pub masque: String,
     pub variable: Option<String>,
     pub duree: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProgrammeAppareil {
+    programme_id: String,
+    class: String,
+    descriptif: Option<String>,
+    actif: Option<bool>,
+    args: HashMap<String, Value>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
