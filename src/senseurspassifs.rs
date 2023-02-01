@@ -127,6 +127,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     let requetes_privees: Vec<&str> = vec![
         REQUETE_GET_APPAREILS_USAGER,
         REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION,
+        REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION,
         REQUETE_LISTE_NOEUDS,
         REQUETE_GET_NOEUD,
         REQUETE_LISTE_SENSEURS_PAR_UUID,

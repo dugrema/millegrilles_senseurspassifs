@@ -13,11 +13,13 @@ pub const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
 pub const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
 pub const REQUETE_GET_APPAREILS_EN_ATTENTE: &str = "getAppareilsEnAttente";
 pub const REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION: &str = "getAppareilDisplayConfiguration";
+pub const REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION: &str = "getAppareilProgrammesConfiguration";
 pub const REQUETE_GET_STATISTIQUES_SENSEUR: &str = "getStatistiquesSenseur";
 
 pub const EVENEMENT_LECTURE: &str = "lecture";
 pub const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
 pub const EVENEMENT_MAJ_DISPLAYS: &str = "evenementMajDisplays";
+pub const EVENEMENT_MAJ_PROGRAMMES: &str = "evenementMajProgrammes";
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";

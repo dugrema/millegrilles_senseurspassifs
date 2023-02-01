@@ -250,6 +250,17 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
             });
             middleware.emettre_evenement(routage_evenement, &evenement_displays).await?;
         }
+        if let Some(programmes) = &configuration.programmes {
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_PROGRAMMES)
+                .exchanges(vec![Securite::L2Prive])
+                .partition(&user_id)
+                .build();
+            let evenement_programmes = json!({
+                CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+                "programmes": programmes
+            });
+            middleware.emettre_evenement(routage_evenement, &evenement_programmes).await?;
+        }
     }
 
     debug!("transaction_maj_appareil Resultat ajout transaction : {:?}", document_transaction);

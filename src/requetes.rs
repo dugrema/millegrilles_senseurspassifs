@@ -35,6 +35,7 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                 match message.action.as_str() {
                     REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => requete_appareil_display_configuration(middleware, message, gestionnaire).await,
+                    REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => requete_appareil_programmes_configuration(middleware, message, gestionnaire).await,
                     REQUETE_LISTE_NOEUDS => requete_liste_noeuds(middleware, message, gestionnaire).await,
                     REQUETE_LISTE_SENSEURS_PAR_UUID => requete_liste_senseurs_par_uuid(middleware, message, gestionnaire).await,
                     REQUETE_LISTE_SENSEURS_NOEUD => requete_liste_senseurs_pour_noeud(middleware, message, gestionnaire).await,
@@ -58,6 +59,7 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                 match message.action.as_str() {
                     REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => requete_appareil_display_configuration(middleware, message, gestionnaire).await,
+                    REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => requete_appareil_programmes_configuration(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
                     REQUETE_GET_STATISTIQUES_SENSEUR => requete_get_statistiques_senseur(middleware, message, gestionnaire).await,
                     _ => {
@@ -192,6 +194,60 @@ async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageVal
     };
 
     let reponse = json!({ "ok": true, "display_configuration": display_configuration });
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_appareil_programmes_configuration Consommer requete : {:?}", & m.message);
+    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu(None)?;
+
+    // Extraire user_id, uuid_appareil du certificat
+    let (user_id, uuid_appareil) = match m.message.certificat {
+        Some(c) => {
+            let user_id = match c.get_user_id()? {
+                Some(u) => u.to_owned(),
+                None => Err(format!("requete_appareil_programmes_configuration user_id manquant du certificat"))?
+            };
+            debug!("EvenementLecture Certificat lecture subject: {:?}", c.subject());
+            let uuid_appareil = match c.subject()?.get("commonName") {
+                Some(s) => s.to_owned(),
+                None => Err(format!("requete_appareil_programmes_configuration Certificat sans uuid_appareil (commonName)"))?
+            };
+            (user_id, uuid_appareil)
+        },
+        None => Err(format!("requete_appareil_programmes_configuration Certificat manquant"))?
+    };
+
+    let display_configuration = {
+        let filtre = doc! { CHAMP_USER_ID: user_id, CHAMP_UUID_APPAREIL: uuid_appareil };
+
+        let projection = doc! {
+            CHAMP_UUID_APPAREIL: 1,
+            CHAMP_INSTANCE_ID: 1,
+            "derniere_lecture": 1,
+            "configuration.programmes": 1,
+        };
+
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+        let opts = FindOneOptions::builder().projection(projection).build();
+        let document_configuration = collection.find_one(filtre, opts).await?;
+        match document_configuration {
+            Some(d) => {
+                let display_configuration: DocAppareil = convertir_bson_deserializable(d)?;
+                display_configuration
+            },
+            None => {
+                let reponse = json!({"ok": false, "err": "appareil inconnu"});
+                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            }
+        }
+    };
+
+    let reponse = json!({ "ok": true, "programmes": display_configuration });
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
