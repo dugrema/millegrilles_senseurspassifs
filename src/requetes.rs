@@ -552,7 +552,8 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAct
             };
 
             // Query
-            let resultat = query_aggregate(middleware, user_id.as_str(), &requete, grouping.as_str(), &tz, min_date, max_date).await?;
+            let resultat = query_aggregate(
+                middleware, user_id.as_str(), &requete, grouping.as_str(), &tz, min_date, max_date).await?;
 
             json!({
                 "ok": true,
@@ -594,12 +595,9 @@ async fn query_aggregate<M>(
     debug!("Rapport Custom sur grouping {}", grouping);
 
     let mut intervalle_heures = doc! {"$gte": min_date.timestamp()};
-    let max_date: Option<ChronoDateTime<Utc>> = match requete.custom_intervalle_max {
-        Some(inner) => {
-            Some(ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(inner as i64, 0), Utc))
-        },
-        None => None
-    };
+    if let Some(inner) = max_date {
+        intervalle_heures.insert("$lt", inner.timestamp());
+    }
 
     let filtre = doc! {
         "user_id": user_id,
@@ -613,6 +611,8 @@ async fn query_aggregate<M>(
         "jours" => pipeline_jour(filtre, tz),
         _ => Err(format!("Type grouping {} non supporte", grouping))?
     };
+
+    debug!("query_aggregate Requete pipeline {:?}", pipeline);
 
     let mut reponse = Vec::with_capacity(100);
     let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
