@@ -1,11 +1,12 @@
 use std::error::Error;
 use log::{debug, error, info};
-use millegrilles_common_rust::bson::{bson, DateTime, doc};
+use chrono_tz::Tz;
+
+use millegrilles_common_rust::bson::{bson, DateTime, doc, Document};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::chrono;
-use millegrilles_common_rust::chrono::{Timelike, Utc};
+use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, TimeZone, DateTime as ChronoDateTime, NaiveDateTime};
 use millegrilles_common_rust::formatteur_messages::MessageMilleGrille;
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
@@ -487,6 +488,10 @@ async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAct
 struct RequeteGetStatistiquesSenseur {
     uuid_appareil: String,
     senseur_id: String,
+    timezone: Option<String>,
+    custom_grouping: Option<String>,
+    custom_intervalle_min: Option<usize>,
+    custom_intervalle_max: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -512,80 +517,138 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAct
         }
     };
 
+    // Determiner timezone
+    const UTC_STR: &str = "UTC";
+    let tz: Tz = match requete.timezone.as_ref() {
+        Some(tz) => {
+            match tz.parse() {
+                Ok(tz) => tz,
+                Err(e) => {
+                    info!("requete_get_statistiques_senseur Mauvais timezone, defaulting a UTC : {:?}", e);
+                    UTC_STR.parse().expect("utc")
+                }
+            }
+        },
+        None => UTC_STR.parse().expect("utc")
+    };
+
+    debug!("requete_get_statistiques_senseur Timezone {:?} - grouping {:?}", tz, requete.custom_grouping);
+
     let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
 
-    let periode72h = {
-        let min_date = Utc::now() - chrono::Duration::days(3);
+    let reponse = match requete.custom_grouping.as_ref() {
+        Some(grouping) => {
+            let min_date = match requete.custom_intervalle_min {
+                Some(d) => d,
+                None => Err(format!("rapport_custom custom_intervalle_min manquant"))?
+            };
+            let min_date: ChronoDateTime<Utc> = ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(min_date as i64, 0), Utc);
+            let mut intervalle_heures = doc! {"$gte": min_date.timestamp()};
+            let max_date = match requete.custom_intervalle_max {
+                Some(inner) => {
+                    Some(ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(inner as i64, 0), Utc))
+                },
+                None => None
+            };
 
-        let filtre = doc! {
-            "user_id": &user_id,
-            "uuid_appareil": &requete.uuid_appareil,
-            "senseur_id": &requete.senseur_id,
-            "heure": {"$gte": min_date.timestamp()}
-        };
+            // Query
+            let resultat = query_aggregate(middleware, user_id.as_str(), &requete, grouping.as_str(), &tz, min_date, max_date).await?;
 
-        let pipeline = vec![
-            doc! { "$match": filtre },
-            doc! { "$project": {"heure": 1, "avg": 1, "min": 1, "max": 1} },
-            doc! { "$sort": {"heure": 1} }
-        ];
+            json!({
+                "ok": true,
+                "custom": resultat,
+            })
+        },
+        None => {
+            let periode72h = {
+                let min_date = Utc::now() - Duration::days(3);
+                query_aggregate(middleware, user_id.as_str(), &requete, "heures", &tz, min_date, None).await?
+            };
 
-        let mut reponse = Vec::new();
-        let mut result = collection.aggregate(pipeline, None).await?;
-        while let Some(d) = result.next().await {
-            let row: ResultatStatistiquesSenseurRow = convertir_bson_deserializable(d?)?;
-            reponse.push(row);
-        }
+            let periode31j = {
+                let min_date = Utc::now() - Duration::days(31);
+                let min_date = jour_juste(&min_date);
+                query_aggregate(middleware, user_id.as_str(), &requete, "jours", &tz, min_date, None).await?
+            };
 
-        reponse
+            json!({
+                "ok": true,
+                "periode72h": periode72h,
+                "periode31j": periode31j,
+            })
+        },
     };
-
-    let periode31j = {
-        let min_date = Utc::now() - chrono::Duration::days(31);
-        let min_date = jour_juste(&min_date);
-
-        let filtre = doc! {
-            "user_id": &user_id,
-            "uuid_appareil": &requete.uuid_appareil,
-            "senseur_id": &requete.senseur_id,
-            "heure": {"$gte": min_date.timestamp()}
-        };
-
-        let pipeline = vec![
-            doc! { "$match": filtre },
-            doc! { "$project": {"heure": 1, "avg": 1, "min": 1, "max": 1} },
-            doc! { "$group": {
-                "_id": { "$dateToString": { "format": "%Y-%m-%d", "date": {"$toDate": {"$multiply": ["$heure", 1000]}} } },
-                "heure": {"$min": "$heure"},
-                "avg": {"$avg": "$avg"},
-                "min": {"$min": "$min"},
-                "max": {"$max": "$max"},
-            } },
-            doc! { "$sort": {"heure": 1} }
-        ];
-
-        let mut reponse = Vec::new();
-        let mut result = collection.aggregate(pipeline, None).await?;
-        while let Some(d) = result.next().await {
-            let row: ResultatStatistiquesSenseurRow = convertir_bson_deserializable(d?)?;
-            reponse.push(row);
-        }
-
-        reponse
-    };
-
-    let reponse = json!({
-        "ok": true,
-        "periode72h": periode72h,
-        "periode31j": periode31j,
-    });
 
     debug!("requete_get_statistiques_senseur Reponse : {:?}", reponse);
 
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }
 
-fn jour_juste(date: &chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+async fn query_aggregate<M>(
+    middleware: &M, user_id: &str, requete: &RequeteGetStatistiquesSenseur, grouping: &str,
+    tz: &Tz, min_date: ChronoDateTime<Utc>, max_date: Option<ChronoDateTime<Utc>>
+)
+    -> Result<Vec<ResultatStatistiquesSenseurRow>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage
+{
+    debug!("Rapport Custom sur grouping {}", grouping);
+
+    let mut intervalle_heures = doc! {"$gte": min_date.timestamp()};
+    let max_date: Option<ChronoDateTime<Utc>> = match requete.custom_intervalle_max {
+        Some(inner) => {
+            Some(ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(inner as i64, 0), Utc))
+        },
+        None => None
+    };
+
+    let filtre = doc! {
+        "user_id": user_id,
+        "uuid_appareil": &requete.uuid_appareil,
+        "senseur_id": &requete.senseur_id,
+        "heure": intervalle_heures,
+    };
+
+    let pipeline = match grouping {
+        "heures" => pipeline_heure(filtre),
+        "jours" => pipeline_jour(filtre, tz),
+        _ => Err(format!("Type grouping {} non supporte", grouping))?
+    };
+
+    let mut reponse = Vec::with_capacity(100);
+    let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
+    let mut result = collection.aggregate(pipeline, None).await?;
+    while let Some(d) = result.next().await {
+        let row: ResultatStatistiquesSenseurRow = convertir_bson_deserializable(d?)?;
+        reponse.push(row);
+    }
+
+    Ok(reponse)
+}
+
+fn pipeline_heure(filtre: Document) -> Vec<Document> {
+    vec![
+        doc! { "$match": filtre },
+        doc! { "$project": {"heure": 1, "avg": 1, "min": 1, "max": 1} },
+        doc! { "$sort": {"heure": 1} }
+    ]
+}
+
+fn pipeline_jour(filtre: Document, tz: &Tz) -> Vec<Document> {
+    vec![
+        doc! { "$match": filtre },
+        doc! { "$project": {"heure": 1, "avg": 1, "min": 1, "max": 1} },
+        doc! { "$group": {
+            "_id": { "$dateToString": { "format": "%Y-%m-%d", "date": {"$toDate": {"$multiply": ["$heure", 1000]}}, "timezone": tz.to_string() } },
+            "heure": {"$min": "$heure"},
+            "avg": {"$avg": "$avg"},
+            "min": {"$min": "$min"},
+            "max": {"$max": "$max"},
+        } },
+        doc! { "$sort": {"heure": 1} }
+    ]
+}
+
+fn jour_juste(date: &ChronoDateTime<Utc>) -> ChronoDateTime<Utc> {
     date.with_hour(0).expect("with_minutes")
         .with_minute(0).expect("with_minutes")
         .with_second(0).expect("with_seconds")
