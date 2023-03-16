@@ -335,6 +335,11 @@ where M: Middleware + 'static {
 
     debug!("Traiter cedule {}", DOMAINE_NOM);
 
+    if middleware.get_mode_regeneration() == true {
+        debug!("traiter_cedule Mode regeneration actif, abort entretien");
+        return Ok(())
+    }
+
     let minute = trigger.get_date().get_datetime().minute();
 
     // if minute % 5 == 4 {

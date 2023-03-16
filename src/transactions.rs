@@ -416,15 +416,17 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
             };
             debug!("transaction_lectures Resultat : {:?}", resultat);
 
-            if let Some(_) = resultat.upserted_id {
-                debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
-                let transaction = TransactionMajSenseur::new(
-                    &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
-                let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
-                    .exchanges(vec![Securite::L4Secure])
-                    // .partition(&gestionnaire.instance_id)
-                    .build();
-                middleware.soumettre_transaction(routage, &transaction, false).await?;
+            if middleware.get_mode_regeneration() == false {
+                if let Some(_) = resultat.upserted_id {
+                    debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
+                    let transaction = TransactionMajSenseur::new(
+                        &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
+                    let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
+                        .exchanges(vec![Securite::L4Secure])
+                        // .partition(&gestionnaire.instance_id)
+                        .build();
+                    middleware.soumettre_transaction(routage, &transaction, false).await?;
+                }
             }
         },
         None => {

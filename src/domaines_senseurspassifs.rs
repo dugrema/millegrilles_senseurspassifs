@@ -126,20 +126,22 @@ async fn entretien<M>(middleware: Arc<M>, gestionnaire: &'static GestionnaireSen
         let duration = DurationTokio::from_millis(DUREE_ATTENTE);
         sleep(duration).await;
 
-        middleware.entretien_validateur().await;
+        if middleware.get_mode_regeneration() == false {
+            middleware.entretien_validateur().await;
 
-        if prochain_entretien_transactions < maintenant {
-            let resultat = resoumettre_transactions(
-                middleware.as_ref(),
-                &collections_transaction
-            ).await;
+            if prochain_entretien_transactions < maintenant {
+                let resultat = resoumettre_transactions(
+                    middleware.as_ref(),
+                    &collections_transaction
+                ).await;
 
-            match resultat {
-                Ok(_) => {
-                    prochain_entretien_transactions = maintenant + intervalle_entretien_transactions;
-                },
-                Err(e) => {
-                    warn!("domaines_senseurspassifs.entretien Erreur resoumission transactions (entretien) : {:?}", e);
+                match resultat {
+                    Ok(_) => {
+                        prochain_entretien_transactions = maintenant + intervalle_entretien_transactions;
+                    },
+                    Err(e) => {
+                        warn!("domaines_senseurspassifs.entretien Erreur resoumission transactions (entretien) : {:?}", e);
+                    }
                 }
             }
         }
