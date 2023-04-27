@@ -1,0 +1,13 @@
+Run millegrilles_senseurspassifs
+
+run --package millegrilles_senseurspassifs --bin millegrilles_senseurspassifs
+
+CAFILE=/var/opt/millegrilles/configuration/pki.millegrille.cert
+CERTFILE=/var/opt/millegrilles/secrets/pki.senseurspassifs_backend.cert
+INSTANCE_ID=26c74bf0-a55e-40cb-83e6-7ea818e2d416
+KEYFILE=/var/opt/millegrilles/secrets/pki.senseurspassifs_backend.cle
+MG_MONGO_HOST=localhost
+MG_MQ_HOST=localhost
+MG_REDIS_PASSWORD_FILE=/var/opt/millegrilles/secrets/passwd.redis.txt
+MG_REDIS_URL=rediss://client_rust@localhost:6379#insecure
+RUST_LOG=warn,millegrilles_senseurspassifs::senseurspassifs=debug,millegrilles_senseurspassifs::requetes=debug

@@ -61,7 +61,7 @@ impl EvenementLecture {
     async fn recuperer_info<M>(self, middleware: &M) -> Result<LectureAppareilInfo, Box<dyn Error>>
         where M: VerificateurMessage + ValidateurX509
     {
-        let fingerprint_certificat = self.lecture.entete.fingerprint_certificat.clone();
+        let fingerprint_certificat = self.lecture.pubkey.clone();
         let certificat = match &self.lecture.certificat {
             Some(c) => {
                 middleware.charger_enveloppe(c, Some(fingerprint_certificat.as_str()), None).await?
@@ -81,7 +81,7 @@ impl EvenementLecture {
         let validation = middleware.verifier_message(&mut message_serialise, None)?;
         if ! validation.valide() { Err(format!("EvenementLecture Evenement de lecture echec validation"))? }
 
-        let lecture: LectureAppareil = message_serialise.parsed.map_contenu(None)?;
+        let lecture: LectureAppareil = message_serialise.parsed.map_contenu()?;
 
         let (user_id, uuid_appareil) = match message_serialise.certificat {
             Some(c) => {
@@ -113,7 +113,7 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
     where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
 {
     debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
-    let lecture: EvenementLecture = m.message.get_msg().map_contenu(None)?;
+    let lecture: EvenementLecture = m.message.get_msg().map_contenu()?;
     debug!("Evenement mappe : {:?}", lecture);
 
     // Extraire instance, convertir evenement en LectureAppareilInfo

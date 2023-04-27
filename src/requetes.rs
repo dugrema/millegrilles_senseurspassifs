@@ -88,7 +88,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_appareils_usager Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsUsager = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteAppareilsUsager = m.message.get_msg().map_contenu()?;
 
     let user_id = match m.get_user_id() {
         Some(inner) => inner,
@@ -149,7 +149,7 @@ async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageVal
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_appareil_display_configuration Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu()?;
 
     // Extraire user_id, uuid_appareil du certificat
     let (user_id, uuid_appareil) = match m.message.certificat {
@@ -203,7 +203,7 @@ async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: Message
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_appareil_programmes_configuration Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu()?;
 
     // Extraire user_id, uuid_appareil du certificat
     let (user_id, uuid_appareil) = match m.message.certificat {
@@ -293,7 +293,7 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_liste_senseurs_par_uuid Consommer requete : {:?}", & m.message);
-    let requete: RequeteSenseursParUuid = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteSenseursParUuid = m.message.get_msg().map_contenu()?;
 
     let senseurs = {
         let filtre = doc! { CHAMP_UUID_SENSEUR: {"$in": &requete.uuid_senseurs} };
@@ -335,7 +335,7 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_liste_senseurs_pour_noeud Consommer requete : {:?}", & m.message);
-    let requete: RequeteSenseursPourNoeud = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteSenseursPourNoeud = m.message.get_msg().map_contenu()?;
 
     let senseurs = {
         let filtre = doc! { CHAMP_INSTANCE_ID: &requete.instance_id };
@@ -377,7 +377,7 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_get_noeud Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetNoeud = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteGetNoeud = m.message.get_msg().map_contenu()?;
 
     let noeud = {
         let filtre = doc! { };
@@ -436,7 +436,7 @@ async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAct
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_get_appareils_en_attente Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetAppareilsEnAttente = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteGetAppareilsEnAttente = m.message.get_msg().map_contenu()?;
 
     let user_id = match m.get_user_id() {
         Some(inner) => inner,
@@ -507,7 +507,7 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAct
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("requete_get_statistiques_senseur Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetStatistiquesSenseur = m.message.get_msg().map_contenu(None)?;
+    let requete: RequeteGetStatistiquesSenseur = m.message.get_msg().map_contenu()?;
 
     let user_id = match m.get_user_id() {
         Some(inner) => inner,

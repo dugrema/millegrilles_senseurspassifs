@@ -435,7 +435,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("commande_inscrire_appareil Consommer requete : {:?}", & m.message);
-    let mut commande: CommandeInscrireAppareil = m.message.get_msg().map_contenu(None)?;
+    let mut commande: CommandeInscrireAppareil = m.message.get_msg().map_contenu()?;
     debug!("commande_inscrire_appareil Commande mappee : {:?}", commande);
 
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
@@ -516,7 +516,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("commande_signer_appareil Consommer requete : {:?}", & m.message);
-    let mut commande: CommandeSignerAppareil = m.message.get_msg().map_contenu(None)?;
+    let mut commande: CommandeSignerAppareil = m.message.get_msg().map_contenu()?;
     debug!("commande_signer_appareil Commande mappee : {:?}", commande);
 
     let user_id = match m.get_user_id() {
@@ -606,7 +606,7 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
     debug!("signer_certificat Requete demande signer appareil : {:?}", requete);
     let reponse: ReponseCertificat = match middleware.transmettre_commande(routage, &requete, true).await? {
         Some(r) => match r {
-            TypeMessage::Valide(m) => m.message.parsed.map_contenu(None)?,
+            TypeMessage::Valide(m) => m.message.parsed.map_contenu()?,
             _ => {
                 Err(format!("senseurspassifs.signer_certificat Reponse certissuer invalide"))?
             }
@@ -672,7 +672,7 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
     where M: GenerateurMessages + MongoDao + VerificateurMessage,
 {
     debug!("commande_challenge_appareil Consommer requete : {:?}", & m.message);
-    let mut commande: CommandeChallengeAppareil = m.message.get_msg().map_contenu(None)?;
+    let mut commande: CommandeChallengeAppareil = m.message.get_msg().map_contenu()?;
     debug!("commande_challenge_appareil Commande mappee : {:?}", commande);
 
     let user_id = match m.get_user_id() {

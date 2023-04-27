@@ -22,15 +22,21 @@ pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestio
         M: ValidateurX509 + GenerateurMessages + MongoDao,
         T: Transaction
 {
-    debug!("aiguillage_transaction {}", transaction.get_action());
-    match transaction.get_action() {
+    let action = match transaction.get_routage().action.as_ref() {
+        Some(inner) => inner.as_str(),
+        None => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} n'a pas d'action - SKIP", transaction.get_uuid_transaction()))?
+    };
+
+    debug!("aiguillage_transaction {}", action);
+
+    match action {
         TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
         TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire).await,
         TRANSACTION_SENSEUR_HORAIRE => transaction_senseur_horaire(middleware, transaction, gestionnaire).await,
-        _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), transaction.get_action())),
+        _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), action)),
     }
 }
 
