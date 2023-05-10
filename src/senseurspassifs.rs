@@ -372,7 +372,7 @@ where
 
 async fn consommer_transaction<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao,
+    M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage
 {
     debug!("senseurspassifs.consommer_transaction Consommer transaction : {:?}", &m.message);
 
