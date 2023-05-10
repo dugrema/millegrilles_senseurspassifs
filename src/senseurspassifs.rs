@@ -448,17 +448,19 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
         let set_on_insert = doc! {
             CHAMP_CREATION: Utc::now(),
             CHAMP_MODIFICATION: Utc::now(),
+            "user_id": &commande.user_id,
             "uuid_appareil": &commande.uuid_appareil,
+        };
+        let set = doc! {
+            "instance_id": &commande.instance_id,
             "cle_publique": &commande.cle_publique,
             "csr": &commande.csr,
-            "instance_id": &commande.instance_id,
-            "user_id": &commande.user_id,
         };
         let options = FindOneAndUpdateOptions::builder()
             .upsert(true)
             .return_document(ReturnDocument::After)
             .build();
-        let ops = doc! { "$setOnInsert": set_on_insert };
+        let ops = doc! { "$setOnInsert": set_on_insert, "$set": set };
         collection.find_one_and_update(filtre_appareil.clone(), ops, Some(options)).await?
     };
 
