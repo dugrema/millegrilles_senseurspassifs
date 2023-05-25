@@ -527,14 +527,40 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
 {
     let now = Utc::now();
 
+    let mut uuid_appareils = Vec::new();
+
     let nombre_presents = match doc_usager.presents.as_ref() {
-        Some(inner) => inner.len(),
+        Some(inner) => {
+            for app in inner {
+                uuid_appareils.push(app.as_str());
+            }
+            inner.len()
+        },
         None => 0
     };
     let nombre_absents = match doc_usager.absents.as_ref() {
-        Some(inner) => inner.len(),
+        Some(inner) => {
+            for app in inner {
+                uuid_appareils.push(app.as_str());
+            }
+            inner.len()
+        },
         None => 0
     };
+
+    let mut map_appareils = HashMap::new();
+    let filtre = doc! {
+        CHAMP_USER_ID: &doc_usager.user_id,
+        CHAMP_UUID_APPAREIL: {"$in": uuid_appareils}
+    };
+    debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    let mut curseur = collection.find(filtre, None).await?;
+    while let Some(r) = curseur.next().await {
+        let app: InformationAppareil = convertir_bson_deserializable(r?)?;
+        debug!("emettre_notification_usager Appareil charge : {:?}", app);
+        map_appareils.insert(app.uuid_appareil.to_owned(), app);
+    }
 
     let sujet = format!("Notifications pour {} appareils ({} avec contact perdu)", nombre_presents+nombre_absents, nombre_absents);
 
@@ -542,7 +568,18 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
     if let Some(appareils) = doc_usager.presents.as_ref() {
         contenu.push_str("<h2>Appareils reconnectes</h2><br/>\n");
         for app in appareils {
-            let ligne = format!("{}<br/>", app.as_str());
+            let ligne = match map_appareils.get(app) {
+                Some(inner) => {
+                    match inner.configuration.as_ref() {
+                        Some(config) => match config.descriptif.as_ref() {
+                            Some(descriptif) =>  format!("{}<br/>", descriptif),
+                            None => format!("{}<br/>", app.as_str())
+                        },
+                        None => format!("{}<br/>", app.as_str())
+                    }
+                },
+                None => format!("{}<br/>", app.as_str())
+            };
             contenu.push_str(ligne.as_str());
         }
         contenu.push_str("<br/>\n")
@@ -551,7 +588,18 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
     if let Some(appareils) = doc_usager.absents.as_ref() {
         contenu.push_str("<h2>Appareils deconnectes</h2><br/>\n");
         for app in appareils {
-            let ligne = format!("{}<br/>\n", app.as_str());
+            let ligne = match map_appareils.get(app) {
+                Some(inner) => {
+                    match inner.configuration.as_ref() {
+                        Some(config) => match config.descriptif.as_ref() {
+                            Some(descriptif) =>  format!("{} (derniere lecture : {:?})<br/>", descriptif, inner.derniere_lecture),
+                            None => format!("{}<br/>", app.as_str())
+                        },
+                        None => format!("{}<br/>", app.as_str())
+                    }
+                },
+                None => format!("{}<br/>", app.as_str())
+            };
             contenu.push_str(ligne.as_str());
         }
         contenu.push_str("</br/>\n")
