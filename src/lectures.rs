@@ -17,6 +17,7 @@ use millegrilles_common_rust::recepteur_messages::MessageValideAction;
 use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::dechiffrage::get_cles_dechiffrees;
 use millegrilles_common_rust::serde_json::Value;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
@@ -539,29 +540,35 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
 
     let mut contenu = String::new();
     if let Some(appareils) = doc_usager.presents.as_ref() {
-        contenu.push_str("<h2>Appareils reconnectes</h2><br/><ul>");
+        contenu.push_str("<h2>Appareils reconnectes</h2><br/>\n");
         for app in appareils {
-            let ligne = format!("<li>{}</li>", app.as_str());
+            let ligne = format!("{}<br/>", app.as_str());
             contenu.push_str(ligne.as_str());
         }
-        contenu.push_str("</ul><br/>")
+        contenu.push_str("<br/>\n")
     }
 
     if let Some(appareils) = doc_usager.absents.as_ref() {
-        contenu.push_str("<h2>Appareils deconnectes</h2><br/><ul>");
+        contenu.push_str("<h2>Appareils deconnectes</h2><br/>\n");
         for app in appareils {
-            let ligne = format!("<li>{}</li>", app.as_str());
+            let ligne = format!("{}<br/>\n", app.as_str());
             contenu.push_str(ligne.as_str());
         }
-        contenu.push_str("</ul>")
+        contenu.push_str("</br/>\n")
     }
 
     // Charger cle notifications usager - creer nouvelle cle au besoin
     let cle_usager = match doc_usager.cle_id.as_ref() {
         Some(cle_id) => {
             debug!("Charger cle_id {}", cle_id);
-            // TODO
-            None::<CleDechiffree>
+            let mut cles_dechiffrees = get_cles_dechiffrees(middleware, vec![cle_id.clone()]).await?;
+            match cles_dechiffrees.remove(cle_id) {
+                Some(inner) => Some(inner),
+                None => {
+                    warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", doc_usager.user_id);
+                    None
+                }
+            }
         },
         None => {
             debug!("Generer nouvelle cle de notification pour usager {}", doc_usager.user_id);
@@ -579,7 +586,7 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
 
     debug!("Emettre notification usager : {:?}", notification);
 
-    middleware.emettre_notification_usager(
+    let cle_id = middleware.emettre_notification_usager(
         doc_usager.user_id.as_str(), notification,
         "info",
         DOMAINE_NOM,
@@ -587,12 +594,16 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
         cle_usager
     ).await?;
 
-    // middleware.emettre_notification_proprietaire(
-    //     notification,
-    //     "warn",
-    //     Some(now + 7 * 86400),  // Expiration epoch
-    //     None
-    // ).await?;
+    if doc_usager.cle_id.is_none() {
+        debug!("Conserver cle_id {} pour usager {}", cle_id, doc_usager.user_id);
+        let filtre = doc! { CHAMP_USER_ID: &doc_usager.user_id };
+        let ops = doc! {
+            "$set": { "cle_id": &cle_id },
+            "$currentDate": { CHAMP_MODIFICATION: true }
+        };
+        let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+        collection.update_one(filtre, ops, None).await?;
+    }
 
     Ok(())
 }
