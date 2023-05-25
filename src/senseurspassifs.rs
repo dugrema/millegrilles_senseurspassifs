@@ -31,14 +31,8 @@ use millegrilles_common_rust::mongodb::Collection;
 
 use crate::requetes::consommer_requete;
 use crate::common::*;
-use crate::lectures::{evenement_domaine_lecture, generer_transactions_lectures_horaires};
+use crate::lectures::{detecter_presence_appareils, evenement_domaine_lecture, generer_transactions_lectures_horaires};
 use crate::transactions::aiguillage_transaction;
-
-const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
-const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
-const INDEX_LECTURES_HORAIRE: &str = "lectures_horaire";
-const INDEX_LECTURES_HORAIRE_RAPPORT: &str = "lectures_horaire_rapport";
-const INDEX_USER_APPAREILS: &str = "user_appareils";
 
 #[derive(Clone, Debug)]
 pub struct GestionnaireSenseursPassifs {
@@ -269,6 +263,22 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         Some(options_lectures_senseurs)
     ).await?;
 
+    // Appareils date_lecture/present
+    let options_appareils_derniere_lecture = IndexOptions {
+        nom_index: Some(String::from(INDEX_APPAREILS_DERNIERE_LECTURE)),
+        unique: false
+    };
+    let champs_appareils_deniere_lecture = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_DERNIERE_LECTURE), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_PRESENT), direction: 1},
+    );
+    middleware.create_index(
+        middleware,
+        COLLECTIONS_APPAREILS,
+        champs_appareils_deniere_lecture,
+        Some(options_appareils_derniere_lecture)
+    ).await?;
+
     // // Index noeuds
     // let options_lectures_noeud = IndexOptions {
     //     nom_index: Some(String::from(INDEX_LECTURES_NOEUD)),
@@ -317,6 +327,21 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         Some(options_senseurs_horaires_rapport)
     ).await?;
 
+    // Notifications usager
+    let options_notifications_usager = IndexOptions {
+        nom_index: Some(String::from(INDEX_USER_NOTIFICATIONS)),
+        unique: true
+    };
+    let champs_index_notifications_usager = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
+    );
+    middleware.create_index(
+        middleware,
+        COLLECTIONS_NOTIFICATIONS_USAGERS,
+        champs_index_notifications_usager,
+        Some(options_notifications_usager)
+    ).await?;
+
     Ok(())
 }
 
@@ -342,12 +367,18 @@ where M: Middleware + 'static {
 
     let minute = trigger.get_date().get_datetime().minute();
 
-    // if minute % 5 == 4 {
-        // Faire l'aggretation des lectures toutes les 5 minutes (offset 4 minutes apres l'heure)
-        if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
-            error!("traiter_cedule Erreur generer_transactions : {:?}", e);
+    // Faire l'aggretation des lectures
+    // Va chercher toutes les lectures non traitees de l'heure precedente (-65 minutes)
+    if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
+        error!("traiter_cedule Erreur generer_transactions : {:?}", e);
+    }
+
+    if minute % 2 == 0 {
+        if let Err(e) = detecter_presence_appareils(middleware).await {
+            error!("traiter_cedule Detecter appareils presents/absents : {:?}", e);
         }
-    //}
+    }
+
 
     Ok(())
 }

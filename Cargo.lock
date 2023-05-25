@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "millegrilles_senseurspassifs"
-version = "2023.6.0"
+version = "2023.6.1"
 dependencies = [
  "chrono-tz",
  "env_logger",

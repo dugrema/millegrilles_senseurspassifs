@@ -38,12 +38,23 @@ pub const CHAMP_UUID_SENSEUR: &str = "uuid_senseur";
 pub const CHAMP_UUID_APPAREIL: &str = "uuid_appareil";
 pub const CHAMP_SENSEURS: &str = "senseurs";
 pub const CHAMP_USER_ID: &str = "user_id";
+pub const CHAMP_DERNIERE_LECTURE: &str = "derniere_lecture_dt";
+pub const CHAMP_PRESENT: &str = "present";
 
 pub const COLLECTIONS_NOM: &str = "SenseursPassifs";
 pub const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";
 pub const COLLECTIONS_LECTURES: &str = "SenseursPassifs/lectures";
 pub const COLLECTIONS_APPAREILS: &str = "SenseursPassifs/appareils";
 pub const COLLECTIONS_SENSEURS_HORAIRE: &str = "SenseursPassifs/senseurs_horaire";
+pub const COLLECTIONS_NOTIFICATIONS_USAGERS: &str = "SenseursPassifs/notifications_usagers";
+
+pub const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
+pub const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
+pub const INDEX_LECTURES_HORAIRE: &str = "lectures_horaire";
+pub const INDEX_LECTURES_HORAIRE_RAPPORT: &str = "lectures_horaire_rapport";
+pub const INDEX_USER_APPAREILS: &str = "user_appareils";
+pub const INDEX_APPAREILS_DERNIERE_LECTURE: &str = "appareils_derniere_lecture";
+pub const INDEX_USER_NOTIFICATIONS: &str = "user_notifications_usager";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionMajNoeud {

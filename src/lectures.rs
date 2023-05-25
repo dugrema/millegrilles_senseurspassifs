@@ -11,7 +11,7 @@ use millegrilles_common_rust::constantes::Securite;
 use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array, convertir_value_mongodate, MongoDao};
-use millegrilles_common_rust::mongodb::options::{FindOneOptions, UpdateOptions};
+use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions, Hint, UpdateOptions};
 use millegrilles_common_rust::recepteur_messages::MessageValideAction;
 use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
@@ -394,4 +394,98 @@ fn heure_juste(date: &DateTime<Utc>) -> DateTime<Utc> {
     date.with_minute(0).expect("with_minutes")
         .with_second(0).expect("with_seconds")
         .with_nanosecond(0).expect("with_nanosecond")
+}
+
+pub async fn detecter_presence_appareils<M>(middleware: &M) -> Result<(), Box<dyn Error>>
+    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+{
+    {
+        // Initialiser flag presence sur nouveaux appareils
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+        let filtre = doc! {CHAMP_PRESENT: {"$exists": false}};
+        let ops = doc! { "$set": {CHAMP_PRESENT: true}, "$currentDate": {CHAMP_MODIFICATION: true} };
+        collection.update_many(filtre, ops, None).await?;
+    }
+
+    // Detecter appareils presents, absents
+    detecter_changement_lectures_appareils(middleware, true).await?;
+    detecter_changement_lectures_appareils(middleware, false).await?;
+
+    // TODO - emettre notifications usagers
+
+    Ok(())
+}
+
+
+
+/// param present : true si detecter changement d'absent vers present, false inverse
+async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool) -> Result<(), Box<dyn Error>>
+    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+{
+    // Date limite pour detecter presence : < est absent, > est present
+    let date_limite = Utc::now() - chrono::Duration::minutes(1);
+
+    let filtre = match present {
+        true => doc! {
+            // Detecter appareils qui etaient absents et sont maintenant presents
+            CHAMP_DERNIERE_LECTURE: { "$gte": date_limite },
+            CHAMP_PRESENT: false,
+        },
+        false => doc! {
+            // Detecter appareils qui etaient presents et sont maintenant absents
+            CHAMP_DERNIERE_LECTURE: { "$lt": date_limite },
+            CHAMP_PRESENT: true,
+        }
+    };
+
+    let options = FindOptions::builder().hint(Hint::Name(INDEX_APPAREILS_DERNIERE_LECTURE.to_string())).build();
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    let mut curseur = collection.find(filtre, Some(options)).await?;
+    while let Some(r) = curseur.next().await {
+        let appareil: InformationAppareil = convertir_bson_deserializable(r?)?;
+        debug!("detecter_changement_lectures_appareils Appareil changement presence : {:?}", appareil.uuid_appareil);
+
+        // Mettre a jour l'appareil dans la base de donnees
+        let filtre = doc!{
+            CHAMP_USER_ID: &appareil.user_id,
+            CHAMP_UUID_APPAREIL: &appareil.uuid_appareil
+        };
+        let ops = doc! {
+            "$set": {
+                CHAMP_PRESENT: present,
+            },
+            "$currentDate": { CHAMP_MODIFICATION: true }
+        };
+        collection.update_one(filtre, ops, None).await?;
+
+        // Ajouter entree de notification pour l'usager
+        ajouter_notification_appareil(middleware, &appareil, present).await?;
+    }
+
+    Ok(())
+}
+
+async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &InformationAppareil, present: bool) -> Result<(), Box<dyn Error>>
+    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+{
+    let (champ_present, champ_inverse) = match present {
+        true => ("presents", "absents"),
+        false => ("absents", "presents")
+    };
+    let ops = doc! {
+        "$setOnInsert": {
+            CHAMP_USER_ID: &appareil.user_id,
+            CHAMP_CREATION: Utc::now(),
+        },
+        "$addToSet": { champ_present: &appareil.uuid_appareil },
+        "$pull": { champ_inverse: &appareil.uuid_appareil },
+        "$currentDate": { CHAMP_MODIFICATION: true }
+    };
+    let filtre = doc! { CHAMP_USER_ID: &appareil.user_id };
+    let options = UpdateOptions::builder().upsert(true).build();
+
+    let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+    collection.update_one(filtre, ops, options).await?;
+
+    Ok(())
 }
