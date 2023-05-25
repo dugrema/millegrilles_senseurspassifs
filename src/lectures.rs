@@ -6,6 +6,7 @@ use log::{debug, error, warn};
 use millegrilles_common_rust::bson::{DateTime as BsonDateTime, doc};
 use millegrilles_common_rust::certificats::ValidateurX509;
 use millegrilles_common_rust::{chrono, serde_json};
+use millegrilles_common_rust::chiffrage_cle::CleDechiffree;
 use millegrilles_common_rust::chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use millegrilles_common_rust::constantes::Securite;
 use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
@@ -19,6 +20,8 @@ use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::serde_json::Value;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
+use millegrilles_common_rust::middleware::EmetteurNotificationsTrait;
+use millegrilles_common_rust::notifications::NotificationMessageInterne;
 
 use crate::common::*;
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
@@ -397,7 +400,7 @@ fn heure_juste(date: &DateTime<Utc>) -> DateTime<Utc> {
 }
 
 pub async fn detecter_presence_appareils<M>(middleware: &M) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+    where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
     {
         // Initialiser flag presence sur nouveaux appareils
@@ -411,16 +414,15 @@ pub async fn detecter_presence_appareils<M>(middleware: &M) -> Result<(), Box<dy
     detecter_changement_lectures_appareils(middleware, true).await?;
     detecter_changement_lectures_appareils(middleware, false).await?;
 
-    // TODO - emettre notifications usagers
+    // Emettre notifications pending pour tous les usagers
+    emettre_notifications_usagers(middleware).await?;
 
     Ok(())
 }
 
-
-
 /// param present : true si detecter changement d'absent vers present, false inverse
 async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+    where M:  MongoDao
 {
     // Date limite pour detecter presence : < est absent, > est present
     let date_limite = Utc::now() - chrono::Duration::minutes(1);
@@ -466,7 +468,7 @@ async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool
 }
 
 async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &InformationAppareil, present: bool) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+    where M: MongoDao
 {
     let (champ_present, champ_inverse) = match present {
         true => ("presents", "absents"),
@@ -479,6 +481,7 @@ async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &Information
         },
         "$addToSet": { champ_present: &appareil.uuid_appareil },
         "$pull": { champ_inverse: &appareil.uuid_appareil },
+        "$set": { CHAMP_DIRTY: true },
         "$currentDate": { CHAMP_MODIFICATION: true }
     };
     let filtre = doc! { CHAMP_USER_ID: &appareil.user_id };
@@ -486,6 +489,110 @@ async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &Information
 
     let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
     collection.update_one(filtre, ops, options).await?;
+
+    Ok(())
+}
+
+
+async fn emettre_notifications_usagers<M>(middleware: &M) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+{
+    let filtre = doc!{
+        CHAMP_DIRTY: true,
+    };
+    let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+    let mut curseur = collection.find(filtre, None).await?;
+    while let Some(r) = curseur.next().await {
+        let doc_usager: DocumentNotificationUsager = convertir_bson_deserializable(r?)?;
+
+        // Reset flag usager
+        let filtre = doc! { CHAMP_USER_ID: &doc_usager.user_id };
+        let ops = doc! {
+            "$set": {CHAMP_DIRTY: false},
+            "$unset": {CHAMP_PRESENTS: true, CHAMP_ABSENTS: true},
+            "$currentDate": {CHAMP_MODIFICATION: true},
+        };
+        collection.update_one(filtre, ops, None).await?;
+
+        // Preparer et emettre la notification
+        emettre_notification_usager(middleware, &doc_usager).await?;
+    }
+
+    Ok(())
+}
+
+async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNotificationUsager) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+{
+    let now = Utc::now();
+
+    let nombre_presents = match doc_usager.presents.as_ref() {
+        Some(inner) => inner.len(),
+        None => 0
+    };
+    let nombre_absents = match doc_usager.absents.as_ref() {
+        Some(inner) => inner.len(),
+        None => 0
+    };
+
+    let sujet = format!("Notifications pour {} appareils ({} avec contact perdu)", nombre_presents+nombre_absents, nombre_absents);
+
+    let mut contenu = String::new();
+    if let Some(appareils) = doc_usager.presents.as_ref() {
+        contenu.push_str("<h2>Appareils reconnectes</h2><br/><ul>");
+        for app in appareils {
+            let ligne = format!("<li>{}</li>", app.as_str());
+            contenu.push_str(ligne.as_str());
+        }
+        contenu.push_str("</ul><br/>")
+    }
+
+    if let Some(appareils) = doc_usager.absents.as_ref() {
+        contenu.push_str("<h2>Appareils deconnectes</h2><br/><ul>");
+        for app in appareils {
+            let ligne = format!("<li>{}</li>", app.as_str());
+            contenu.push_str(ligne.as_str());
+        }
+        contenu.push_str("</ul>")
+    }
+
+    // Charger cle notifications usager - creer nouvelle cle au besoin
+    let cle_usager = match doc_usager.cle_id.as_ref() {
+        Some(cle_id) => {
+            debug!("Charger cle_id {}", cle_id);
+            // TODO
+            None::<CleDechiffree>
+        },
+        None => {
+            debug!("Generer nouvelle cle de notification pour usager {}", doc_usager.user_id);
+            None
+        }
+    };
+
+    let notification = NotificationMessageInterne {
+        from: "SenseursPassifs".to_string(),
+        subject: Some(sujet),
+        content: contenu,
+        version: 1,
+        format: "html".to_string(),
+    };
+
+    debug!("Emettre notification usager : {:?}", notification);
+
+    middleware.emettre_notification_usager(
+        doc_usager.user_id.as_str(), notification,
+        "info",
+        DOMAINE_NOM,
+        Some(now.timestamp() + 3 * 86400),
+        cle_usager
+    ).await?;
+
+    // middleware.emettre_notification_proprietaire(
+    //     notification,
+    //     "warn",
+    //     Some(now + 7 * 86400),  // Expiration epoch
+    //     None
+    // ).await?;
 
     Ok(())
 }

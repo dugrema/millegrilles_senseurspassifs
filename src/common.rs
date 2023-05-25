@@ -40,6 +40,9 @@ pub const CHAMP_SENSEURS: &str = "senseurs";
 pub const CHAMP_USER_ID: &str = "user_id";
 pub const CHAMP_DERNIERE_LECTURE: &str = "derniere_lecture_dt";
 pub const CHAMP_PRESENT: &str = "present";
+pub const CHAMP_DIRTY: &str = "dirty";
+pub const CHAMP_PRESENTS: &str = "presents";
+pub const CHAMP_ABSENTS: &str = "absents";
 
 pub const COLLECTIONS_NOM: &str = "SenseursPassifs";
 pub const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";
@@ -208,4 +211,12 @@ pub struct TransactionLectureHoraire {
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub avg: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DocumentNotificationUsager {
+    pub user_id: String,
+    pub presents: Option<Vec<String>>,
+    pub absents: Option<Vec<String>>,
+    pub cle_id: Option<String>,
 }
