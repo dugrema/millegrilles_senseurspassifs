@@ -114,6 +114,18 @@ pub struct InformationAppareil {
     pub configuration: Option<ConfigurationAppareil>,
 }
 
+impl<'a> InformationAppareil{
+    pub fn get_descriptif(&'a self) -> &'a str {
+        match &self.configuration {
+            Some(inner) => match &inner.descriptif {
+                Some(inner) => inner.as_str(),
+                None => self.uuid_appareil.as_str()
+            },
+            None => self.uuid_appareil.as_str()
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DocAppareil {
     pub uuid_appareil: String,
@@ -139,9 +151,16 @@ pub struct DocAppareil {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NotificationAppareil {
+    pub programme_id: String,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LectureAppareil {
     pub lectures_senseurs: HashMap<String, LectureSenseur>,
     pub displays: Option<Vec<ParamsDisplay>>,
+    pub notifications: Option<Vec<NotificationAppareil>>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -219,4 +238,11 @@ pub struct DocumentNotificationUsager {
     pub presents: Option<Vec<String>>,
     pub absents: Option<Vec<String>>,
     pub cle_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NotificationAppareilUsager {
+    pub user_id: String,
+    pub uuid_appareil: String,
+    pub notification: NotificationAppareil,
 }

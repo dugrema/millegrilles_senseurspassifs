@@ -32,6 +32,7 @@ struct LectureAppareilInfo {
     user_id: String,
     lectures_senseurs: HashMap<String, LectureSenseur>,
     displays: Option<Vec<ParamsDisplay>>,
+    notifications: Option<Vec<NotificationAppareil>>
 }
 
 impl LectureAppareilInfo {
@@ -108,13 +109,14 @@ impl EvenementLecture {
             user_id,
             lectures_senseurs: lecture.lectures_senseurs,
             displays: lecture.displays,
+            notifications: lecture.notifications,
         })
     }
 }
 
 
 pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
     debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
     let lecture: EvenementLecture = m.message.get_msg().map_contenu()?;
@@ -213,6 +215,21 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
     // Split lectures, conserver (volatil avant commit horaire)
     if let Err(e) = ajouter_lecture_db(middleware, &lecture).await {
         warn!("Erreur sauvegarde lectures : {:?}", e);
+    }
+
+    // Traiter notifications evenement
+    if let Some(notifications) = lecture.notifications {
+        debug!("recuperer_info Traiter notifications messages : {:?}", notifications);
+        for notification in notifications {
+            let notif_info = NotificationAppareilUsager {
+                user_id: lecture.user_id.clone(),
+                uuid_appareil: lecture.uuid_appareil.clone(),
+                notification,
+            };
+            if let Err(e) = emettre_notification_appareil_usager(middleware, notif_info).await {
+                warn!("Erreur emission notifications appareil : {:?}", e);
+            }
+        }
     }
 
     Ok(())
@@ -609,7 +626,8 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
     let cle_usager = match doc_usager.cle_id.as_ref() {
         Some(cle_id) => {
             debug!("Charger cle_id {}", cle_id);
-            let mut cles_dechiffrees = get_cles_dechiffrees(middleware, vec![cle_id.clone()]).await?;
+            let mut cles_dechiffrees = get_cles_dechiffrees(
+                middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await?;
             match cles_dechiffrees.remove(cle_id) {
                 Some(inner) => Some(inner),
                 None => {
@@ -654,4 +672,115 @@ async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNot
     }
 
     Ok(())
+}
+
+async fn emettre_notification_appareil_usager<M>(middleware: &M, notification_appareil: NotificationAppareilUsager) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+{
+    let now = Utc::now();
+
+    let doc_usager: Option<DocumentNotificationUsager> = {
+        let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+        let filtre = doc!("user_id": &notification_appareil.user_id);
+        let doc_usager = collection.find_one(filtre, None).await?;
+        match doc_usager {
+            Some(inner) => {
+                let du: DocumentNotificationUsager = convertir_bson_deserializable(inner)?;
+                Some(du)
+            },
+            None => None
+        }
+    };
+
+    let filtre = doc! {
+        CHAMP_USER_ID: &notification_appareil.user_id,
+        CHAMP_UUID_APPAREIL: &notification_appareil.uuid_appareil,
+    };
+    debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    let doc_appareil: InformationAppareil = match collection.find_one(filtre, None).await? {
+        Some(doc_appareil) => convertir_bson_deserializable(doc_appareil)?,
+        None => Err(format!("lectures.emettre_notification_appareil_usager Appareil {} inconnu", notification_appareil.uuid_appareil))?
+    };
+
+    let descriptif_appareil = doc_appareil.get_descriptif();
+
+    let sujet = format!("Notification pour {}", descriptif_appareil);
+
+    let mut contenu = String::new();
+    contenu.push_str("<h2>Notification</h2><br/>\n");
+    match notification_appareil.notification.message {
+        Some(message) => {
+            contenu.push_str(format!("<p>{}</p><br/>\n", message).as_str());
+        },
+        None => {
+            contenu.push_str("<p>Aucun message.</p>\n")
+        }
+    }
+    contenu.push_str("<br/>\n");
+
+    // Charger cle notifications usager - creer nouvelle cle au besoin
+    let cle_usager = match &doc_usager {
+        Some(d) => {
+            match &d.cle_id {
+                Some(cle_id) => {
+                    charger_cle_notification_usager(
+                        middleware, cle_id.as_ref(), notification_appareil.user_id.as_str()).await?
+                },
+                None => None,
+            }
+        },
+        None => None
+    };
+
+    let notification = NotificationMessageInterne {
+        from: "SenseursPassifs".to_string(),
+        subject: Some(sujet),
+        content: contenu,
+        version: 1,
+        format: "html".to_string(),
+    };
+
+    debug!("Emettre notification appareil usager : {:?}", notification);
+
+    let cle_presente = cle_usager.is_some();
+
+    let cle_id = middleware.emettre_notification_usager(
+        notification_appareil.user_id.as_str(), notification,
+        "info",
+        DOMAINE_NOM,
+        Some(now.timestamp() + 3 * 86400),
+        cle_usager
+    ).await?;
+
+    if cle_presente == false {
+        debug!("Conserver cle_id {} pour usager {}", cle_id, notification_appareil.user_id);
+        let filtre = doc! { CHAMP_USER_ID: &notification_appareil.user_id };
+        let ops = doc! {
+            "$set": { "cle_id": &cle_id },
+            "$currentDate": { CHAMP_MODIFICATION: true }
+        };
+        let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+        collection.update_one(filtre, ops, None).await?;
+    }
+
+    Ok(())
+}
+
+async fn charger_cle_notification_usager<M>(middleware: &M, cle_id: &str, user_id: &str)
+    -> Result<Option<CleDechiffree>, Box<dyn Error>>
+    where M: GenerateurMessages
+{
+    debug!("charger_cle_notification_usager Charger cle_id {}", cle_id);
+    let mut cles_dechiffrees = match get_cles_dechiffrees(middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("lectures.charger_cle_notification_usager Erreur get_cles_dechiffrees : {:?}", e))?
+    };
+    match cles_dechiffrees.remove(cle_id) {
+        Some(inner) => Ok(Some(inner)),
+        None => {
+            warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", user_id);
+            Ok(None)
+        }
+    }
 }
