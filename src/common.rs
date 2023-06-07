@@ -59,6 +59,8 @@ pub const INDEX_USER_APPAREILS: &str = "user_appareils";
 pub const INDEX_APPAREILS_DERNIERE_LECTURE: &str = "appareils_derniere_lecture";
 pub const INDEX_USER_NOTIFICATIONS: &str = "user_notifications_usager";
 
+pub const CONST_APAREIL_LECTURE_TIMEOUT_SECS: i64 = 300;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionMajNoeud {
     pub instance_id: String,

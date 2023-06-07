@@ -443,7 +443,7 @@ async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool
     where M:  MongoDao
 {
     // Date limite pour detecter presence : < est absent, > est present
-    let date_limite = Utc::now() - chrono::Duration::minutes(1);
+    let date_limite = Utc::now() - chrono::Duration::seconds(CONST_APAREIL_LECTURE_TIMEOUT_SECS);
 
     let filtre = match present {
         true => doc! {
