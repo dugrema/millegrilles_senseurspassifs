@@ -16,7 +16,7 @@ use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMil
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
-use millegrilles_common_rust::middleware::{EmetteurNotificationsTrait, Middleware, sauvegarder_traiter_transaction};
+use millegrilles_common_rust::middleware::{EmetteurNotificationsTrait, Middleware, sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
 use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneAndUpdateOptions, FindOneOptions, FindOptions, Hint, ReturnDocument, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::{MessageValideAction, TypeMessage};
@@ -32,7 +32,7 @@ use millegrilles_common_rust::mongodb::Collection;
 use crate::requetes::consommer_requete;
 use crate::common::*;
 use crate::lectures::{detecter_presence_appareils, evenement_domaine_lecture, generer_transactions_lectures_horaires};
-use crate::transactions::aiguillage_transaction;
+use crate::transactions::{aiguillage_transaction, TransactionInitialiserAppareil, TransactionMajAppareil};
 
 #[derive(Clone, Debug)]
 pub struct GestionnaireSenseursPassifs {
@@ -187,6 +187,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_SUPPRESSION_SENSEUR,
         TRANSACTION_MAJ_APPAREIL,
         TRANSACTION_SENSEUR_HORAIRE,
+        TRANSACTION_INIT_APPAREIL,
     ];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
@@ -476,6 +477,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
     };
 
     let doc_appareil_option = {
+        // Creer appareil au besoin, mettre a jour instance_id
         let set_on_insert = doc! {
             CHAMP_CREATION: Utc::now(),
             CHAMP_MODIFICATION: Utc::now(),
@@ -484,61 +486,79 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
         };
         let set = doc! {
             "instance_id": &commande.instance_id,
-            "cle_publique": &commande.cle_publique,
-            "csr": &commande.csr,
+            // "cle_publique": &commande.cle_publique,
+            // "csr": &commande.csr,
         };
         let options = FindOneAndUpdateOptions::builder()
             .upsert(true)
             .return_document(ReturnDocument::After)
             .build();
-        let ops = doc! { "$setOnInsert": set_on_insert, "$set": set };
+        let ops = doc! {
+            "$setOnInsert": set_on_insert,
+            "$set": set,
+        };
         collection.find_one_and_update(filtre_appareil.clone(), ops, Some(options)).await?
     };
 
-    if let Some(d) = doc_appareil_option {
-        let doc_appareil: DocAppareil = convertir_bson_deserializable(d)?;
-        let mut certificat = doc_appareil.certificat;
+    let doc_appareil: DocAppareil = match doc_appareil_option {
+        Some(inner) => convertir_bson_deserializable(inner)?,
+        None => {
+            Err(format!("Erreur creation document appareil, pas sauvegarde dans DB."))?
+        }
+    };
 
+    // Appareil existe deja, verifier si le certificat recu est deja signe
+    let mut certificat = doc_appareil.certificat;
 
-        match certificat {
-            Some(c) => {
-                let mut repondre_certificat = false;
+    match certificat {
+        Some(c) => {
+            let mut repondre_certificat = false;
 
-                // Comparer cles publiques - si differentes, on genere un nouveau certificat
-                if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
-                    if &commande.cle_publique != cle_publique_db {
-                        debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
-                        certificat = None;
-                        let ops = doc! {
-                            "$set": {
-                                "cle_publique": &commande.cle_publique,
-                                "csr": &commande.csr,
-                            },
-                            "$unset": {"certificat": true, "fingerprint": true},
-                            "$currentDate": {CHAMP_MODIFICATION: true},
-                        };
-                        collection.update_one(filtre_appareil.clone(), ops, None).await?;
-                    } else {
-                        repondre_certificat = true;
-                    }
+            // Comparer cles publiques - si differentes, on genere un nouveau certificat
+            if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
+                if &commande.cle_publique != cle_publique_db {
+                    // Mismatch CSR et certificat, conserver le csr recu
+
+                    // debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
+                    // certificat = None;
+                    // let ops = doc! {
+                    //     "$set": {
+                    //         "cle_publique": &commande.cle_publique,
+                    //         "csr": &commande.csr,
+                    //     },
+                    //     "$unset": {"certificat": true, "fingerprint": true},
+                    //     "$currentDate": {CHAMP_MODIFICATION: true},
+                    // };
+                    // collection.update_one(filtre_appareil.clone(), ops, None).await?;
                 } else {
                     repondre_certificat = true;
                 }
-
-                if repondre_certificat {
-                    debug!("Repondre avec le certificat");
-                    let reponse = json!({"ok": true, "certificat": c});
-                    return Ok(Some(middleware.formatter_reponse(reponse, None)?));
-                }
-            },
-            None => {
-                // Rien a faire, on a conserve le certificat
+            } else {
+                repondre_certificat = true;
             }
-        }
 
-    } else {
-        error!("commande_inscrire_appareil Erreur db - document pas insere");
+            if repondre_certificat {
+                debug!("Repondre avec le certificat");
+                let reponse = json!({"ok": true, "certificat": c});
+                return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+            }
+        },
+        None => {
+            // Par de certificat. Conserver le csr recu.
+        }
     }
+
+    debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
+    certificat = None;
+    let ops = doc! {
+        "$set": {
+            "cle_publique": &commande.cle_publique,
+            "csr": &commande.csr,
+        },
+        "$unset": {"certificat": true, "fingerprint": true},
+        "$currentDate": {CHAMP_MODIFICATION: true},
+    };
+    collection.update_one(filtre_appareil.clone(), ops, None).await?;
 
     let reponse = json!({"ok": true});
     return Ok(Some(middleware.formatter_reponse(reponse, None)?));
@@ -546,7 +566,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
 
 async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+    where M: GenerateurMessages + ValidateurX509 + MongoDao + VerificateurMessage,
 {
     debug!("commande_signer_appareil Consommer requete : {:?}", & m.message);
     let mut commande: CommandeSignerAppareil = m.message.get_msg().map_contenu()?;
@@ -594,14 +614,28 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
     };
 
     let certificat = match renouvellement {
-        true => signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil, commande.csr.as_ref()).await?,
+        true => signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil.clone(), commande.csr.as_ref()).await?,
         false => match doc_appareil.certificat {
             Some(c) => c,
             None => {
-                signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil, None).await?
+                signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil.clone(), None).await?
             }
         }
     };
+
+    if let Some(true) = doc_appareil.persiste {
+        // Ok
+        debug!("commande_signer_appareil Transaction appareil deja persiste (OK)")
+    } else {
+        debug!("commande_signer_appareil Generer transaction pour persister l'appareil {:?}", doc_appareil.uuid_appareil);
+        let transaction = TransactionInitialiserAppareil {
+            uuid_appareil: doc_appareil.uuid_appareil.to_owned(),
+            user_id,
+        };
+        sauvegarder_traiter_transaction_serializable(
+            middleware, &transaction, gestionnaire,
+            DOMAINE_NOM, TRANSACTION_INIT_APPAREIL).await?;
+    }
 
     debug!("Repondre avec certificat");
     let reponse = json!({
@@ -731,6 +765,14 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
         }
     };
 
+    let instance_id = match doc_appareil.instance_id {
+        Some(inner) => inner,
+        None => {
+            let reponse = json!({"ok": false, "err": "Pas d'instance_id pour cet appareil"});
+            return Ok(Some(middleware.formatter_reponse(reponse, None)?))
+        }
+    };
+
     // Emettre la commande de challenge
     let message_challenge = json!({
         "ok": true,
@@ -740,7 +782,7 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
         "fingerprint": doc_appareil.fingerprint,
     });
     let routage = RoutageMessageAction::builder("senseurspassifs_relai", "challengeAppareil")
-        .partition(doc_appareil.instance_id)
+        .partition(instance_id)
         .exchanges(vec![Securite::L2Prive])
         .build();
     middleware.transmettre_commande(routage, &message_challenge, false).await?;

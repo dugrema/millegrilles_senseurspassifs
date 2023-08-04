@@ -36,6 +36,7 @@ pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestio
         TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire).await,
         TRANSACTION_SENSEUR_HORAIRE => transaction_senseur_horaire(middleware, transaction, gestionnaire).await,
+        TRANSACTION_INIT_APPAREIL => transaction_initialiser_appareil(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), action)),
     }
 }
@@ -147,9 +148,9 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct TransactionMajAppareil {
-    uuid_appareil: String,
-    configuration: ConfigurationAppareil,
+pub struct TransactionMajAppareil {
+    pub uuid_appareil: String,
+    pub configuration: ConfigurationAppareil,
 }
 
 async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
@@ -276,6 +277,49 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
     }?;
 
     Ok(reponse)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionInitialiserAppareil {
+    pub uuid_appareil: String,
+    pub user_id: String,
+}
+
+async fn transaction_initialiser_appareil<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_initialiser_appareil Consommer transaction : {:?}", &transaction);
+    let transaction_convertie: TransactionInitialiserAppareil = match transaction.convertir() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_initialiser_appareil Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_initialiser_appareil Transaction lue {:?}", transaction_convertie);
+
+    let collection = match middleware.get_collection(COLLECTIONS_APPAREILS) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
+    };
+
+    let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil, CHAMP_USER_ID: &transaction_convertie.user_id };
+    let ops = doc! {
+        "$set": { "persiste": true },
+        "$setOnInsert": {
+            CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+            CHAMP_USER_ID: &transaction_convertie.user_id,
+            CHAMP_CREATION: Utc::now(),
+            "present": false,
+        },
+        "$currentDate": { CHAMP_MODIFICATION: true },
+    };
+    let options = UpdateOptions::builder().upsert(true).build();
+    if let Err(e) = collection.update_one(filtre, ops, options).await {
+        Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
+    }
+
+    Ok(middleware.reponse_ok()?)
 }
 
 async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
@@ -601,6 +645,33 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
     //     },
     //     Err(e) => Err(format!("transactions.transaction_senseur_horaire Erreur update_many : {:?}", e))?
     // }
+
+    // S'assurer que l'appareil existe (e.g. pour regeneration)
+    {
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+        let filtre = doc! {
+            CHAMP_USER_ID: &transaction_convertie.user_id,
+            CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+        };
+        let ops = doc! {
+            "$setOnInsert": {
+                CHAMP_USER_ID: &transaction_convertie.user_id,
+                CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+                CHAMP_CREATION: Utc::now(),
+                "present": false,
+            },
+            "$currentDate": {
+                CHAMP_MODIFICATION: true,
+            },
+            "$addToSet": {
+                CHAMP_LECTURES_DISPONIBLES: transaction_convertie.senseur_id
+            }
+        };
+        let options = UpdateOptions::builder().upsert(true).build();
+        if let Err(e) = collection.update_one(filtre, ops, options).await {
+            Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
+        }
+    }
 
     middleware.reponse_ok()
 }

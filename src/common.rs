@@ -29,6 +29,7 @@ pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
 pub const TRANSACTION_MAJ_NOEUD: &str = "majNoeud";
 pub const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
+pub const TRANSACTION_INIT_APPAREIL: &str = "initAppareil";
 pub const TRANSACTION_MAJ_APPAREIL: &str = "majAppareil";
 pub const TRANSACTION_SENSEUR_HORAIRE: &str = "senseurHoraire";
 
@@ -43,6 +44,7 @@ pub const CHAMP_PRESENT: &str = "present";
 pub const CHAMP_DIRTY: &str = "dirty";
 pub const CHAMP_PRESENTS: &str = "presents";
 pub const CHAMP_ABSENTS: &str = "absents";
+pub const CHAMP_LECTURES_DISPONIBLES: &str = "lectures_disponibles";
 
 pub const COLLECTIONS_NOM: &str = "SenseursPassifs";
 pub const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";
@@ -131,7 +133,7 @@ impl<'a> InformationAppareil{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DocAppareil {
     pub uuid_appareil: String,
-    pub instance_id: String,
+    pub instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cle_publique: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -150,6 +152,14 @@ pub struct DocAppareil {
     pub displays: Option<Vec<ParamsDisplay>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
+
+    /// Si true, indique qu'une transaction a ete produite (requis pour regeneration)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persiste: Option<bool>,
+
+    /// Liste de senseurs avec des lectures disponibles (historique)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lectures_disponibles: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

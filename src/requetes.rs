@@ -101,7 +101,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
     let appareils = {
         let mut appareils = Vec::new();
 
-        let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_INSTANCE_ID: {"$exists": true} };
+        let filtre = doc! { CHAMP_USER_ID: &user_id /*, CHAMP_INSTANCE_ID: {"$exists": true} */ };
 
         let projection = doc! {
             CHAMP_UUID_APPAREIL: 1,
@@ -112,6 +112,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
             "configuration": 1,
             "displays": 1,
             "programmes": 1,
+            "lectures_disponibles": 1,
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
