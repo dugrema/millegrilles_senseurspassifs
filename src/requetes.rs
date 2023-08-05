@@ -113,6 +113,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
             "displays": 1,
             "programmes": 1,
             "lectures_disponibles": 1,
+            "supprime": 1,
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;

@@ -152,6 +152,8 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_MAJ_NOEUD,
         TRANSACTION_SUPPRESSION_SENSEUR,
         TRANSACTION_MAJ_APPAREIL,
+        TRANSACTION_APPAREIL_SUPPRIMER,
+        TRANSACTION_APPAREIL_RESTAURER,
         COMMANDE_INSCRIRE_APPAREIL,
         COMMANDE_CHALLENGE_APPAREIL,
         COMMANDE_SIGNER_APPAREIL,
@@ -188,6 +190,8 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_MAJ_APPAREIL,
         TRANSACTION_SENSEUR_HORAIRE,
         TRANSACTION_INIT_APPAREIL,
+        TRANSACTION_APPAREIL_SUPPRIMER,
+        TRANSACTION_APPAREIL_RESTAURER,
     ];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
@@ -425,7 +429,9 @@ where
         TRANSACTION_LECTURE |
         TRANSACTION_SUPPRESSION_SENSEUR |
         TRANSACTION_MAJ_APPAREIL |
-        TRANSACTION_SENSEUR_HORAIRE => {
+        TRANSACTION_SENSEUR_HORAIRE |
+        TRANSACTION_APPAREIL_SUPPRIMER |
+        TRANSACTION_APPAREIL_RESTAURER => {
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
         _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", m.action))?,
@@ -458,6 +464,14 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
             // Pour l'instant, aucune autre validation. On traite comme une transaction
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
+        TRANSACTION_APPAREIL_SUPPRIMER |
+        TRANSACTION_APPAREIL_RESTAURER => {
+            if user_id.is_none() {
+                Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide (user_id requis) pour message {:?}", m.correlation_id))?
+            }
+            // Pour l'instant, aucune autre validation. On traite comme une transaction
+            Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
+        }
         _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, m.action))?,
     }
 }

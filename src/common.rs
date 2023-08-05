@@ -32,6 +32,8 @@ pub const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
 pub const TRANSACTION_INIT_APPAREIL: &str = "initAppareil";
 pub const TRANSACTION_MAJ_APPAREIL: &str = "majAppareil";
 pub const TRANSACTION_SENSEUR_HORAIRE: &str = "senseurHoraire";
+pub const TRANSACTION_APPAREIL_SUPPRIMER: &str = "supprimerAppareil";
+pub const TRANSACTION_APPAREIL_RESTAURER: &str = "restaurerAppareil";
 
 //const CHAMP_INSTANCE_ID: &str = "instance_id";
 pub const CHAMP_INSTANCE_ID: &str = "instance_id";
@@ -45,6 +47,7 @@ pub const CHAMP_DIRTY: &str = "dirty";
 pub const CHAMP_PRESENTS: &str = "presents";
 pub const CHAMP_ABSENTS: &str = "absents";
 pub const CHAMP_LECTURES_DISPONIBLES: &str = "lectures_disponibles";
+pub const CHAMP_SUPPRIME: &str = "supprime";
 
 pub const COLLECTIONS_NOM: &str = "SenseursPassifs";
 pub const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";
@@ -160,6 +163,10 @@ pub struct DocAppareil {
     /// Liste de senseurs avec des lectures disponibles (historique)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lectures_disponibles: Option<Vec<String>>,
+
+    /// Flag supprime (agit davantage comme "hide")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supprime: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

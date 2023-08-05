@@ -37,6 +37,8 @@ pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestio
         TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire).await,
         TRANSACTION_SENSEUR_HORAIRE => transaction_senseur_horaire(middleware, transaction, gestionnaire).await,
         TRANSACTION_INIT_APPAREIL => transaction_initialiser_appareil(middleware, transaction, gestionnaire).await,
+        TRANSACTION_APPAREIL_SUPPRIMER => transaction_appareil_supprimer(middleware, transaction, gestionnaire).await,
+        TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), action)),
     }
 }
@@ -317,6 +319,117 @@ async fn transaction_initialiser_appareil<M, T>(middleware: &M, transaction: T, 
     let options = UpdateOptions::builder().upsert(true).build();
     if let Err(e) = collection.update_one(filtre, ops, options).await {
         Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
+    }
+
+    Ok(middleware.reponse_ok()?)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TransactionAppareilSupprimer {
+    uuid_appareil: String,
+}
+
+async fn transaction_appareil_supprimer<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_appareil_supprimer Consommer transaction : {:?}", &transaction);
+    let contenu_transaction: TransactionAppareilSupprimer = match transaction.clone().convertir() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_appareil_supprimer Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_appareil_supprimer Transaction lue {:?}", contenu_transaction);
+
+    let user_id = match transaction.get_enveloppe_certificat() {
+        Some(inner) => match inner.get_user_id()? {
+            Some(user) => user.to_owned(),
+            None => Err(format!("senseurspassifs.transaction_appareil_supprimer Erreur user_id absent du certificat"))?
+        },
+        None => Err(format!("senseurspassifs.transaction_appareil_supprimer Erreur certificat absent"))?
+    };
+
+    let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &contenu_transaction.uuid_appareil };
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    let ops = doc! {
+        "$set": { CHAMP_SUPPRIME: true },
+        "$currentDate": { CHAMP_MODIFICATION: true }
+    };
+    let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
+    let doc_appareil = match collection.find_one_and_update(filtre, ops, options).await {
+        Ok(inner) => match inner {
+            Some(inner) => {
+                let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {
+                    Ok(inner) => inner,
+                    Err(e) => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur mapping DocAppareil {:?}", e))?
+                };
+                doc_appareil
+            },
+            None => Err(format!("senseurspassifs.transaction_appareil_restaurer Appareil {} inconnu", contenu_transaction.uuid_appareil))?
+        },
+        Err(e) => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur DB {:?}", e))?
+    };
+
+    {
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
+            .exchanges(vec![Securite::L2Prive])
+            .partition(&user_id)
+            .build();
+        middleware.emettre_evenement(routage_evenement, &doc_appareil).await?;
+    }
+
+    Ok(middleware.reponse_ok()?)
+}
+
+async fn transaction_appareil_restaurer<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_appareil_restaurer Consommer transaction : {:?}", &transaction);
+    let contenu_transaction: TransactionAppareilSupprimer = match transaction.clone().convertir() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_appareil_restaurer Transaction lue {:?}", contenu_transaction);
+
+    let user_id = match transaction.get_enveloppe_certificat() {
+        Some(inner) => match inner.get_user_id()? {
+            Some(user) => user.to_owned(),
+            None => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur user_id absent du certificat"))?
+        },
+        None => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur certificat absent"))?
+    };
+
+    let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &contenu_transaction.uuid_appareil };
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    let ops = doc! {
+        "$set": { CHAMP_SUPPRIME: false },
+        "$currentDate": { CHAMP_MODIFICATION: true }
+    };
+    let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
+    let doc_appareil = match collection.find_one_and_update(filtre, ops, options).await {
+        Ok(inner) => match inner {
+            Some(inner) => {
+                let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {
+                    Ok(inner) => inner,
+                    Err(e) => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur mapping DocAppareil {:?}", e))?
+                };
+                doc_appareil
+            },
+            None => Err(format!("senseurspassifs.transaction_appareil_restaurer Appareil {} inconnu", contenu_transaction.uuid_appareil))?
+        },
+        Err(e) => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur DB {:?}", e))?
+    };
+
+    {
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
+            .exchanges(vec![Securite::L2Prive])
+            .partition(&user_id)
+            .build();
+        middleware.emettre_evenement(routage_evenement, &doc_appareil).await?;
     }
 
     Ok(middleware.reponse_ok()?)
