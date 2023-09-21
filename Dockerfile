@@ -14,4 +14,8 @@ WORKDIR $APP_FOLDER
 
 COPY target/release/millegrilles_senseurspassifs .
 
+# UID 983 mgissuer et code
+# GID 980 millegrilles
+USER 983:980
+
 CMD ./millegrilles_senseurspassifs
