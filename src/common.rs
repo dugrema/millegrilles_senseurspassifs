@@ -24,6 +24,7 @@ pub const EVENEMENT_MAJ_PROGRAMMES: &str = "evenementMajProgrammes";
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
 pub const COMMANDE_SIGNER_APPAREIL: &str = "signerAppareil";
+pub const COMMANDE_CONFIRMER_RELAI: &str = "confirmerRelai";
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -55,6 +56,7 @@ pub const COLLECTIONS_LECTURES: &str = "SenseursPassifs/lectures";
 pub const COLLECTIONS_APPAREILS: &str = "SenseursPassifs/appareils";
 pub const COLLECTIONS_SENSEURS_HORAIRE: &str = "SenseursPassifs/senseurs_horaire";
 pub const COLLECTIONS_NOTIFICATIONS_USAGERS: &str = "SenseursPassifs/notifications_usagers";
+pub const COLLECTIONS_RELAIS: &str = "SenseursPassifs/relais";
 
 pub const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
 pub const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
@@ -63,6 +65,7 @@ pub const INDEX_LECTURES_HORAIRE_RAPPORT: &str = "lectures_horaire_rapport";
 pub const INDEX_USER_APPAREILS: &str = "user_appareils";
 pub const INDEX_APPAREILS_DERNIERE_LECTURE: &str = "appareils_derniere_lecture";
 pub const INDEX_USER_NOTIFICATIONS: &str = "user_notifications_usager";
+pub const INDEX_USER_APPAREIL_RELAIS: &str = "user_appareil_relais";
 
 pub const CONST_APAREIL_LECTURE_TIMEOUT_SECS: i64 = 300;
 

@@ -61,6 +61,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         COLLECTIONS_LECTURES.to_string(),
         COLLECTIONS_APPAREILS.to_string(),
         COLLECTIONS_SENSEURS_HORAIRE.to_string(),
+        COLLECTIONS_RELAIS.to_string(),
     ] }
 
     fn get_q_transactions(&self) -> Option<String> {
@@ -157,6 +158,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         COMMANDE_INSCRIRE_APPAREIL,
         COMMANDE_CHALLENGE_APPAREIL,
         COMMANDE_SIGNER_APPAREIL,
+        COMMANDE_CONFIRMER_RELAI,
     ];
     for cmd in commandes_transactions {
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});
@@ -347,6 +349,22 @@ pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &Ges
         Some(options_notifications_usager)
     ).await?;
 
+    // Notifications usager
+    let options_relais = IndexOptions {
+        nom_index: Some(String::from(INDEX_USER_APPAREIL_RELAIS)),
+        unique: true
+    };
+    let champs_index_relais = vec!(
+        ChampIndex {nom_champ: String::from(CHAMP_UUID_APPAREIL), direction: 1},
+        ChampIndex {nom_champ: String::from(CHAMP_USER_ID), direction: 1},
+    );
+    middleware.create_index(
+        middleware,
+        COLLECTIONS_RELAIS,
+        champs_index_relais,
+        Some(options_relais)
+    ).await?;
+
     Ok(())
 }
 
@@ -457,6 +475,7 @@ async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionna
         COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
         COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire).await,
         COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire).await,
+        COMMANDE_CONFIRMER_RELAI => commande_confirmer_relai(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR |
@@ -808,4 +827,52 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
 struct CommandeChallengeAppareil {
     uuid_appareil: String,
     challenge: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CommandeConfirmerRelai {
+    fingerprint: String,
+    expiration: Option<DateEpochSeconds>,
+}
+
+#[derive(Deserialize)]
+pub struct RowRelais {
+    pub fingerprint: String,
+    pub user_id: String,
+    pub expiration: Option<DateEpochSeconds>,
+}
+
+async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug ! ("commande_confirmer_relai Consommer requete : {:?}", & m.message);
+    let mut commande: CommandeConfirmerRelai = m.message.get_msg().map_contenu() ?;
+    debug ! ("commande_confirmer_relai Commande mappee : {:?}", commande);
+
+    let certificat = match m.message.certificat {
+        Some(inner) => inner,
+        None => Err(format!("commande_confirmer_relai Certificat manquant du message"))?
+    };
+    let common_name = certificat.get_common_name()?;
+    let user_id = match certificat.get_user_id()? {
+        Some(inner) => inner.as_str(),
+        None => Err(format!("commande_confirmer_relai Certificat sans user_id"))?
+    };
+
+    let filtre = doc! { "uuid_appareil": &common_name, "user_id": user_id };
+    let ops = doc! {
+        "$set": { "fingerprint": &commande.fingerprint },
+        "$setOnInsert": {
+            "uuid_appareil": common_name,
+            "user_id": user_id,
+            CHAMP_CREATION: Utc::now()
+        },
+        "$currentDate": { CHAMP_MODIFICATION: true }
+    };
+    let collection = middleware.get_collection(COLLECTIONS_RELAIS)?;
+    let options = UpdateOptions::builder().upsert(true).build();
+    collection.update_one(filtre, ops, options).await?;
+
+    Ok(middleware.reponse_ok()?)
 }

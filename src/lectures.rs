@@ -2,7 +2,7 @@ use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::Duration;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use millegrilles_common_rust::bson::{DateTime as BsonDateTime, doc};
 use millegrilles_common_rust::certificats::ValidateurX509;
 use millegrilles_common_rust::{chrono, serde_json};
@@ -25,8 +25,9 @@ use millegrilles_common_rust::middleware::EmetteurNotificationsTrait;
 use millegrilles_common_rust::notifications::NotificationMessageInterne;
 
 use crate::common::*;
-use crate::senseurspassifs::GestionnaireSenseursPassifs;
+use crate::senseurspassifs::{GestionnaireSenseursPassifs, RowRelais};
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct LectureAppareilInfo {
     uuid_appareil: String,
     user_id: String,
@@ -58,33 +59,56 @@ impl LectureAppareilInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct EvenementLecture {
     instance_id: String,
-    lecture: MessageMilleGrille,
+    lecture: Option<MessageMilleGrille>,
+    lecture_relayee: Option<LectureAppareilInfo>,
 }
 
 impl EvenementLecture {
 
-    async fn recuperer_info<M>(self, middleware: &M) -> Result<LectureAppareilInfo, Box<dyn Error>>
+    async fn recuperer_info<M,S>(self, middleware: &M, fingerprint_relai: S) -> Result<LectureAppareilInfo, Box<dyn Error>>
+        where
+            M: VerificateurMessage + ValidateurX509 + MongoDao,
+            S: AsRef<str>
+    {
+        if self.lecture.is_some() {
+            // Charger une lecture signee par l'appareil
+            self.charger_lecture_directe(middleware).await
+        } else if self.lecture_relayee.is_some() {
+            // Charger une lecture relayee
+            self.charger_lecture_relayee(middleware, fingerprint_relai).await
+        } else {
+            Err(format!("lectures.EvenementLecture.recuperer_info Aucun contenu lecture/lecture_relayee"))?
+        }
+    }
+
+    async fn charger_lecture_directe<M>(self, middleware: &M) -> Result<LectureAppareilInfo, Box<dyn Error>>
         where M: VerificateurMessage + ValidateurX509
     {
-        let fingerprint_certificat = self.lecture.pubkey.clone();
-        let certificat = match &self.lecture.certificat {
+        let lecture = match self.lecture {
+            Some(inner) => inner,
+            None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Field lecture est vide"))?
+        };
+
+        let fingerprint_certificat = lecture.pubkey.clone();
+
+        let certificat = match &lecture.certificat {
             Some(c) => {
                 middleware.charger_enveloppe(c, Some(fingerprint_certificat.as_str()), None).await?
             },
             None => {
                 match middleware.get_certificat(fingerprint_certificat.as_str()).await {
                     Some(c) => c,
-                    None => Err(format!("EvenementLecture Certificat inconnu : {}", fingerprint_certificat))?
+                    None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Certificat inconnu : {}", fingerprint_certificat))?
                 }
             }
         };
 
         // Valider le message, extraire enveloppe
-        let mut message_serialise = MessageSerialise::from_parsed(self.lecture)?;
+        let mut message_serialise = MessageSerialise::from_parsed(lecture)?;
         message_serialise.certificat = Some(certificat);
 
         let validation = middleware.verifier_message(&mut message_serialise, None)?;
-        if ! validation.valide() { Err(format!("EvenementLecture Evenement de lecture echec validation"))? }
+        if ! validation.valide() { Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture echec validation"))? }
 
         let lecture: LectureAppareil = message_serialise.parsed.map_contenu()?;
 
@@ -92,16 +116,16 @@ impl EvenementLecture {
             Some(c) => {
                 let user_id = match c.get_user_id()? {
                     Some(u) => u.to_owned(),
-                    None => Err(format!("EvenementLecture Evenement de lecture user_ud manquant du certificat"))?
+                    None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture user_ud manquant du certificat"))?
                 };
-                debug!("EvenementLecture Certificat lecture subject: {:?}", c.subject());
+                debug!("lectures.EvenementLecture.charger_lecture_directe Certificat lecture subject: {:?}", c.subject());
                 let uuid_appareil = match c.subject()?.get("commonName") {
                     Some(s) => s.to_owned(),
-                    None => Err(format!("EvenementLecture Evenement de lecture certificat sans uuid_appareil (commonName)"))?
+                    None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat sans uuid_appareil (commonName)"))?
                 };
                 (user_id, uuid_appareil)
             },
-            None => Err(format!("EvenementLecture Evenement de lecture certificat manquant"))?
+            None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat manquant"))?
         };
 
         Ok(LectureAppareilInfo {
@@ -111,6 +135,47 @@ impl EvenementLecture {
             displays: lecture.displays,
             notifications: lecture.notifications,
         })
+    }
+
+    async fn charger_lecture_relayee<M,S>(self, middleware: &M, fingerprint_relai: S)
+        -> Result<LectureAppareilInfo, Box<dyn Error>>
+        where
+            M: VerificateurMessage + ValidateurX509 + MongoDao,
+            S: AsRef<str>
+    {
+        let fingerprint_relai = fingerprint_relai.as_ref();
+
+        let lecture = match self.lecture_relayee {
+            Some(inner) => inner,
+            None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Field lecture est vide"))?
+        };
+
+        let user_id = lecture.user_id;
+        let uuid_appareil = lecture.uuid_appareil;
+
+        // Verifier que le relai est autorise a signer pour cet appareil
+        let filtre = doc! {
+            CHAMP_USER_ID: &user_id,
+            CHAMP_UUID_APPAREIL: &uuid_appareil,
+            "fingerprint": fingerprint_relai
+        };
+        let collection = middleware.get_collection_typed::<RowRelais>(COLLECTIONS_RELAIS)?;
+        match collection.find_one(filtre, None).await? {
+            Some(inner) => {
+                // Ok, autorise
+                Ok(LectureAppareilInfo {
+                    uuid_appareil,
+                    user_id,
+                    lectures_senseurs: lecture.lectures_senseurs,
+                    displays: lecture.displays,
+                    notifications: lecture.notifications,
+                })
+            },
+            None => {
+                // Il n'y a pas d'autorisation
+                Err(format!("charger_lecture_relayee Relai {} non autorise pour appareil {}", fingerprint_relai, uuid_appareil))?
+            }
+        }
     }
 }
 
@@ -122,9 +187,16 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
     let lecture: EvenementLecture = m.message.get_msg().map_contenu()?;
     debug!("Evenement mappe : {:?}", lecture);
 
+    let certificat = match m.message.certificat.as_ref() {
+        Some(inner) => inner.as_ref(),
+        None => Err(format!("evenement_domaine_lecture Erreur chargement certificat (absent)"))?
+    };
+
+    let fingerprint_relai = certificat.fingerprint.as_str();
+
     // Extraire instance, convertir evenement en LectureAppareilInfo
     let instance_id = lecture.instance_id.clone();
-    let lecture = lecture.recuperer_info(middleware).await?;
+    let lecture = lecture.recuperer_info(middleware, fingerprint_relai).await?;
 
     // Trouver date de la plus recente lecture
     let derniere_lecture = lecture.calculer_derniere_lecture();
