@@ -206,7 +206,6 @@ async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageVal
 struct ReponseRequeteAppareilProgrammesConfiguration {
     ok: bool,
     programmes: Option<DocAppareil>,
-    timezone: Option<String>,
 }
 
 async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
@@ -231,14 +230,6 @@ async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: Message
             (user_id, uuid_appareil)
         },
         None => Err(format!("requete_appareil_programmes_configuration Certificat manquant"))?
-    };
-
-    // Charger la timezone de l'usager
-    let collection_usager = middleware.get_collection_typed::<RowCollectionUsager>(COLLECTIONS_USAGER)?;
-    let filtre_usager = doc!{CHAMP_USER_ID: &user_id};
-    let config_usager = match collection_usager.find_one(filtre_usager, None).await? {
-        Some(inner) => inner,
-        None => RowCollectionUsager::default(&user_id)
     };
 
     let display_configuration = {
@@ -270,7 +261,6 @@ async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: Message
     let reponse = ReponseRequeteAppareilProgrammesConfiguration {
         ok: true,
         programmes: Some(display_configuration),
-        timezone: config_usager.timezone
     };
 
     // let reponse = json!({ "ok": true, "programmes": display_configuration });
