@@ -4,6 +4,7 @@ mod requetes;
 mod common;
 mod lectures;
 mod transactions;
+mod commandes;
 
 use log::{info};
 use millegrilles_common_rust::tokio as tokio;

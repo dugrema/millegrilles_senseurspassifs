@@ -25,7 +25,8 @@ use millegrilles_common_rust::middleware::EmetteurNotificationsTrait;
 use millegrilles_common_rust::notifications::NotificationMessageInterne;
 
 use crate::common::*;
-use crate::senseurspassifs::{GestionnaireSenseursPassifs, RowRelais};
+use crate::senseurspassifs::GestionnaireSenseursPassifs;
+use crate::commandes::RowRelais;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LectureAppareilInfo {

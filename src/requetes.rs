@@ -43,6 +43,7 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                     REQUETE_GET_NOEUD => requete_get_noeud(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
                     REQUETE_GET_STATISTIQUES_SENSEUR => requete_get_statistiques_senseur(middleware, message, gestionnaire).await,
+                    REQUETE_GET_CONFIGURATION_USAGER => requete_get_configuration_usager(middleware, message, gestionnaire).await,
                     _ => {
                         error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                         Ok(None)
@@ -63,6 +64,7 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                     REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => requete_appareil_programmes_configuration(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
                     REQUETE_GET_STATISTIQUES_SENSEUR => requete_get_statistiques_senseur(middleware, message, gestionnaire).await,
+                    REQUETE_GET_CONFIGURATION_USAGER => requete_get_configuration_usager(middleware, message, gestionnaire).await,
                     _ => {
                         error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                         Ok(None)
@@ -583,6 +585,70 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAct
     };
 
     debug!("requete_get_statistiques_senseur Reponse : {:?}", reponse);
+
+    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Deserialize)]
+struct RequeteGetConfigurationUsager {}
+
+#[derive(Deserialize)]
+struct RowCollectionUsager {
+    user_id: String,
+    timezone: Option<String>,
+}
+
+impl RowCollectionUsager {
+    fn default<S>(user_id: S) -> Self
+        where S: ToString
+    {
+        Self {
+            user_id: user_id.to_string(),
+            timezone: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ReponseGetConfigurationUsager {
+    ok: bool,
+    user_id: String,
+    timezone: Option<String>,
+}
+
+impl From<RowCollectionUsager> for ReponseGetConfigurationUsager {
+    fn from(value: RowCollectionUsager) -> Self {
+        Self {
+            ok: true,
+            user_id: value.user_id,
+            timezone: value.timezone,
+        }
+    }
+}
+
+async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_get_configuration_usager Consommer requete : {:?}", & m.message);
+    let requete: RequeteGetConfigurationUsager = m.message.get_msg().map_contenu()?;
+
+    let user_id = match m.get_user_id() {
+        Some(inner) => inner,
+        None => {
+            let reponse = json!({"ok": false, "err": "user_id manquant"});
+            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+        }
+    };
+
+    let collection = middleware.get_collection_typed::<RowCollectionUsager>(COLLECTIONS_USAGER)?;
+    let filtre = doc! { CHAMP_USER_ID: &user_id };
+    let configuration_usager = match collection.find_one(filtre, None).await? {
+        Some(inner) => inner,
+        None => RowCollectionUsager::default(&user_id)
+    };
+
+    let reponse = ReponseGetConfigurationUsager::from(configuration_usager);
 
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
 }

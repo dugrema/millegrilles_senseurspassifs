@@ -39,6 +39,7 @@ pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestio
         TRANSACTION_INIT_APPAREIL => transaction_initialiser_appareil(middleware, transaction, gestionnaire).await,
         TRANSACTION_APPAREIL_SUPPRIMER => transaction_appareil_supprimer(middleware, transaction, gestionnaire).await,
         TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, gestionnaire).await,
+        TRANSACTION_MAJ_CONFIGURATION_USAGER => transaction_maj_configuration_usager(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), action)),
     }
 }
@@ -787,4 +788,53 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
     }
 
     middleware.reponse_ok()
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TransactionMajConfigurationUsager {
+    timezone: Option<String>,
+}
+
+async fn transaction_maj_configuration_usager<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_maj_configuration_usager Consommer transaction : {:?}", &transaction);
+    let contenu_transaction: TransactionMajConfigurationUsager = match transaction.clone().convertir() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur conversion transaction : {:?}", e))?
+    };
+
+    let user_id = match transaction.get_enveloppe_certificat() {
+        Some(inner) => match inner.get_user_id()? {
+            Some(user) => user.to_owned(),
+            None => Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur user_id absent du certificat"))?
+        },
+        None => Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur certificat absent"))?
+    };
+
+    let filtre = doc!{CHAMP_USER_ID: &user_id};
+    let collection = middleware.get_collection(COLLECTIONS_USAGER)?;
+
+    let transaction_bson = match convertir_to_bson(contenu_transaction) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur conversion : {:?}", e))?
+    };
+
+    let ops = doc!{
+        "$set": transaction_bson,
+        "$setOnInsert": {
+            CHAMP_USER_ID: &user_id,
+            CHAMP_CREATION: Utc::now(),
+        },
+        "$currentDate": {CHAMP_MODIFICATION: true}
+    };
+    let options = UpdateOptions::builder().upsert(true).build();
+    if let Err(e) = collection.update_one(filtre, ops, options).await {
+        Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur maj configuration : {:?}", e))?
+    }
+
+    Ok(middleware.reponse_ok()?)
 }

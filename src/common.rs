@@ -15,6 +15,7 @@ pub const REQUETE_GET_APPAREILS_EN_ATTENTE: &str = "getAppareilsEnAttente";
 pub const REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION: &str = "getAppareilDisplayConfiguration";
 pub const REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION: &str = "getAppareilProgrammesConfiguration";
 pub const REQUETE_GET_STATISTIQUES_SENSEUR: &str = "getStatistiquesSenseur";
+pub const REQUETE_GET_CONFIGURATION_USAGER: &str = "getConfigurationUsager";
 
 pub const EVENEMENT_LECTURE: &str = "lecture";
 pub const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
@@ -35,6 +36,7 @@ pub const TRANSACTION_MAJ_APPAREIL: &str = "majAppareil";
 pub const TRANSACTION_SENSEUR_HORAIRE: &str = "senseurHoraire";
 pub const TRANSACTION_APPAREIL_SUPPRIMER: &str = "supprimerAppareil";
 pub const TRANSACTION_APPAREIL_RESTAURER: &str = "restaurerAppareil";
+pub const TRANSACTION_MAJ_CONFIGURATION_USAGER: &str = "majConfigurationUsager";
 
 //const CHAMP_INSTANCE_ID: &str = "instance_id";
 pub const CHAMP_INSTANCE_ID: &str = "instance_id";
@@ -57,6 +59,7 @@ pub const COLLECTIONS_APPAREILS: &str = "SenseursPassifs/appareils";
 pub const COLLECTIONS_SENSEURS_HORAIRE: &str = "SenseursPassifs/senseurs_horaire";
 pub const COLLECTIONS_NOTIFICATIONS_USAGERS: &str = "SenseursPassifs/notifications_usagers";
 pub const COLLECTIONS_RELAIS: &str = "SenseursPassifs/relais";
+pub const COLLECTIONS_USAGER: &str = "SenseursPassifs/usager";
 
 pub const INDEX_LECTURES_NOEUD: &str = "lectures_noeud";
 pub const INDEX_LECTURES_SENSEURS: &str = "lectures_senseur";
