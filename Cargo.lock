@@ -2010,7 +2010,7 @@ checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
 
 [[package]]
 name = "millegrilles_common_rust"
-version = "2023.11.2"
+version = "2024.0.1"
 dependencies = [
  "async-compression",
  "async-recursion",
@@ -2058,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "millegrilles_senseurspassifs"
-version = "2023.11.5"
+version = "2024.0.1"
 dependencies = [
  "chrono-tz",
  "env_logger",
