@@ -144,12 +144,12 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
     let evenements: Vec<&str> = vec![
         EVENEMENT_LECTURE,
-        EVENEMENT_PRESENCE_APPAREIL,
     ];
     for evnt in evenements {
         rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive });
         rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, evnt), exchange: Securite::L2Prive });
     }
+    rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, EVENEMENT_PRESENCE_APPAREIL), exchange: Securite::L2Prive });
 
     let commandes_transactions: Vec<&str> = vec![
         // Transactions usager, verifier via commande

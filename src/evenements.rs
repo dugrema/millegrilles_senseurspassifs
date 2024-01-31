@@ -2,22 +2,29 @@ use std::error::Error;
 use log::{debug, warn};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::generateur_messages::GenerateurMessages;
+use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::middleware::EmetteurNotificationsTrait;
 use millegrilles_common_rust::mongo_dao::MongoDao;
 use millegrilles_common_rust::recepteur_messages::MessageValideAction;
 use millegrilles_common_rust::verificateur::VerificateurMessage;
-use millegrilles_common_rust::serde::Deserialize;
+use millegrilles_common_rust::serde::{Serialize, Deserialize};
 
 use crate::common::*;
 use millegrilles_common_rust::constantes::*;
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct EvenementPresenceAppareil {
     uuid_appareil: String,
     user_id: String,
     deconnecte: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct EvenementPresenceAppareilUser {
+    uuid_appareil: String,
+    user_id: String,
+    connecte: bool,
 }
 
 pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
@@ -37,7 +44,7 @@ pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValideAct
         return Ok(())
     }
     if ! certificat.verifier_roles_string(vec![ROLE_RELAI_NOM.to_string()]) {
-        warn!("evenement_appareil_presence Evenement presenceAppareil recu sans role {}, SKIP", ROLE_RELAI_NOM);
+        warn!("evenement_appareil_presence Evenement presenceAppareil recu sans role {} (roles: {:?}) SKIP", ROLE_RELAI_NOM, certificat.get_roles());
         return Ok(())
     }
 
@@ -53,6 +60,20 @@ pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValideAct
     };
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
     collection.update_one(filtre, ops, None).await?;
+
+    // Re-emettre l'evenement pour le userId
+    {
+        let evenement_reemis = EvenementPresenceAppareilUser {
+            uuid_appareil: evenement.uuid_appareil,
+            user_id: evenement.user_id,
+            connecte: !deconnecte
+        };
+        let routage = RoutageMessageAction::builder(DOMAINE_NOM, "presenceAppareil")
+            .partition(&evenement_reemis.user_id)
+            .exchanges(vec![Securite::L2Prive])
+            .build();
+        middleware.emettre_evenement(routage, &evenement_reemis).await?;
+    }
 
     Ok(())
 }
