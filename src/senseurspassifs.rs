@@ -32,6 +32,7 @@ use crate::commandes::consommer_commande;
 
 use crate::requetes::consommer_requete;
 use crate::common::*;
+use crate::evenements::evenement_appareil_presence;
 use crate::lectures::{detecter_presence_appareils, evenement_domaine_lecture, generer_transactions_lectures_horaires};
 use crate::transactions::{aiguillage_transaction, TransactionInitialiserAppareil, TransactionMajAppareil};
 
@@ -143,6 +144,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
     let evenements: Vec<&str> = vec![
         EVENEMENT_LECTURE,
+        EVENEMENT_PRESENCE_APPAREIL,
     ];
     for evnt in evenements {
         rk_volatils.push(ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, evnt), exchange: Securite::L2Prive });
@@ -424,6 +426,7 @@ where
 
     match m.action.as_str() {
         EVENEMENT_LECTURE => { evenement_domaine_lecture(middleware, &m, gestionnaire).await?; Ok(None) },
+        EVENEMENT_PRESENCE_APPAREIL => { evenement_appareil_presence(middleware, &m, gestionnaire).await?; Ok(None) },
         _ => Err(format!("senseurspassifs.consommer_evenement: Mauvais type d'action pour une transaction : {}", m.action))?,
     }
 }

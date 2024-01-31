@@ -21,6 +21,7 @@ pub const EVENEMENT_LECTURE: &str = "lecture";
 pub const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
 pub const EVENEMENT_MAJ_DISPLAYS: &str = "evenementMajDisplays";
 pub const EVENEMENT_MAJ_PROGRAMMES: &str = "evenementMajProgrammes";
+pub const EVENEMENT_PRESENCE_APPAREIL: &str = "presenceAppareil";
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
@@ -46,6 +47,9 @@ pub const CHAMP_SENSEURS: &str = "senseurs";
 pub const CHAMP_USER_ID: &str = "user_id";
 pub const CHAMP_DERNIERE_LECTURE: &str = "derniere_lecture_dt";
 pub const CHAMP_PRESENT: &str = "present";
+pub const CHAMP_CONNECTE: &str = "connecte";
+pub const CHAMP_MAJ_CONNEXION: &str = "maj_connexion";
+pub const CHAMP_NOTIFICATION_PRESENCE: &str = "notification_presence";
 pub const CHAMP_DIRTY: &str = "dirty";
 pub const CHAMP_PRESENTS: &str = "presents";
 pub const CHAMP_ABSENTS: &str = "absents";
@@ -70,7 +74,7 @@ pub const INDEX_APPAREILS_DERNIERE_LECTURE: &str = "appareils_derniere_lecture";
 pub const INDEX_USER_NOTIFICATIONS: &str = "user_notifications_usager";
 pub const INDEX_USER_APPAREIL_RELAIS: &str = "user_appareil_relais";
 
-pub const CONST_APAREIL_LECTURE_TIMEOUT_SECS: i64 = 300;
+pub const CONST_APAREIL_LECTURE_TIMEOUT_SECS: i64 = 900;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionMajNoeud {
@@ -125,6 +129,8 @@ pub struct InformationAppareil {
     pub derniere_lecture: Option<DateEpochSeconds>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ConfigurationAppareil>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connecte: Option<bool>,
 }
 
 impl<'a> InformationAppareil{
@@ -173,6 +179,10 @@ pub struct DocAppareil {
     /// Flag supprime (agit davantage comme "hide")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supprime: Option<bool>,
+
+    /// Flag connecte (websocket)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connecte: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
