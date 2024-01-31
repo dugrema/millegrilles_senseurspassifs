@@ -17,6 +17,7 @@ use crate::senseurspassifs::GestionnaireSenseursPassifs;
 struct EvenementPresenceAppareil {
     uuid_appareil: String,
     user_id: String,
+    version: Option<String>,
     deconnecte: Option<bool>,
 }
 
@@ -24,6 +25,7 @@ struct EvenementPresenceAppareil {
 struct EvenementPresenceAppareilUser {
     uuid_appareil: String,
     user_id: String,
+    version: Option<String>,
     connecte: bool,
 }
 
@@ -53,7 +55,7 @@ pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValideAct
         CHAMP_USER_ID: &evenement.user_id,
     };
     let deconnecte = match evenement.deconnecte.as_ref() {Some(b)=>b.to_owned(), None => false};
-    let set_ops = doc!{CHAMP_CONNECTE: !deconnecte};
+    let set_ops = doc!{CHAMP_CONNECTE: !deconnecte, CHAMP_VERSION: evenement.version.as_ref()};
     let ops = doc!{
         "$set": set_ops,
         "$currentDate": {CHAMP_MODIFICATION: true, CHAMP_MAJ_CONNEXION: true}
@@ -66,6 +68,7 @@ pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValideAct
         let evenement_reemis = EvenementPresenceAppareilUser {
             uuid_appareil: evenement.uuid_appareil,
             user_id: evenement.user_id,
+            version: evenement.version,
             connecte: !deconnecte
         };
         let routage = RoutageMessageAction::builder(DOMAINE_NOM, "presenceAppareil")

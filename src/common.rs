@@ -49,6 +49,7 @@ pub const CHAMP_DERNIERE_LECTURE: &str = "derniere_lecture_dt";
 pub const CHAMP_PRESENT: &str = "present";
 pub const CHAMP_CONNECTE: &str = "connecte";
 pub const CHAMP_MAJ_CONNEXION: &str = "maj_connexion";
+pub const CHAMP_VERSION: &str = "version";
 pub const CHAMP_NOTIFICATION_PRESENCE: &str = "notification_presence";
 pub const CHAMP_DIRTY: &str = "dirty";
 pub const CHAMP_PRESENTS: &str = "presents";
@@ -131,6 +132,8 @@ pub struct InformationAppareil {
     pub configuration: Option<ConfigurationAppareil>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connecte: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 impl<'a> InformationAppareil{
@@ -183,6 +186,9 @@ pub struct DocAppareil {
     /// Flag connecte (websocket)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connecte: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

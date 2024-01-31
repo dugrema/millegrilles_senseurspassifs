@@ -117,6 +117,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
             "lectures_disponibles": 1,
             "supprime": 1,
             CHAMP_CONNECTE: 1,
+            CHAMP_VERSION: 1,
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
@@ -322,6 +323,7 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
             "securite": 1,
             "descriptif": 1,
             CHAMP_CONNECTE: 1,
+            CHAMP_VERSION: 1,
         };
         let opts = FindOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
@@ -364,6 +366,7 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
             "securite": 1,
             "descriptif": 1,
             CHAMP_CONNECTE: 1,
+            CHAMP_VERSION: 1,
         };
         let opts = FindOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
