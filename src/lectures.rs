@@ -543,12 +543,16 @@ async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool
             CHAMP_USER_ID: &appareil.user_id,
             CHAMP_UUID_APPAREIL: &appareil.uuid_appareil
         };
-        let ops = doc! {
+        let mut ops = doc! {
             "$set": {
                 CHAMP_PRESENT: present,
             },
             "$currentDate": { CHAMP_MODIFICATION: true }
         };
+        // Retirer le champ connecte (on n'a aucune information)
+        if ! present {
+            ops.insert("$unset", doc!{CHAMP_CONNECTE: true});
+        }
         collection.update_one(filtre, ops, None).await?;
 
         // Ajouter entree de notification pour l'usager
