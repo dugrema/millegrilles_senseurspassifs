@@ -16,9 +16,11 @@ pub const REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION: &str = "getAppareilDisplay
 pub const REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION: &str = "getAppareilProgrammesConfiguration";
 pub const REQUETE_GET_STATISTIQUES_SENSEUR: &str = "getStatistiquesSenseur";
 pub const REQUETE_GET_CONFIGURATION_USAGER: &str = "getConfigurationUsager";
+pub const REQUETE_GET_TIMEZONE_APPAREIL: &str = "getTimezoneAppareil";
 
 pub const EVENEMENT_LECTURE: &str = "lecture";
 pub const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";
+pub const EVENEMENT_MAJ_CONFIGURATION_APPAREIL: &str = "majConfigurationAppareil";
 pub const EVENEMENT_MAJ_DISPLAYS: &str = "evenementMajDisplays";
 pub const EVENEMENT_MAJ_PROGRAMMES: &str = "evenementMajProgrammes";
 pub const EVENEMENT_PRESENCE_APPAREIL: &str = "presenceAppareil";
@@ -56,6 +58,7 @@ pub const CHAMP_PRESENTS: &str = "presents";
 pub const CHAMP_ABSENTS: &str = "absents";
 pub const CHAMP_LECTURES_DISPONIBLES: &str = "lectures_disponibles";
 pub const CHAMP_SUPPRIME: &str = "supprime";
+pub const CHAMP_TIMEZONE: &str = "timezone";
 
 pub const COLLECTIONS_NOM: &str = "SenseursPassifs";
 pub const COLLECTIONS_INSTANCES: &str = "SenseursPassifs/instances";

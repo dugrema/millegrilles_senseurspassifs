@@ -265,8 +265,23 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
     }
 
-    // Evenement de mise a jour des displays (relais)
     if let Some(configuration) = &document_transaction.configuration {
+
+        // Evenement de mise a jour des displays (relais)
+        {
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_CONFIGURATION_APPAREIL)
+                .exchanges(vec![Securite::L2Prive])
+                .partition(&user_id)
+                .build();
+            let evenement = json!({
+                CHAMP_USER_ID: &user_id,
+                CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+                CHAMP_TIMEZONE: configuration.timezone.as_ref(),
+            });
+            middleware.emettre_evenement(routage_evenement, &evenement).await?;
+        }
+
+        // Evenement de mise a jour des displays (relais)
         if let Some(displays) = &configuration.displays {
             let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_DISPLAYS)
                 .exchanges(vec![Securite::L2Prive])
@@ -278,6 +293,8 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
             });
             middleware.emettre_evenement(routage_evenement, &evenement_displays).await?;
         }
+
+        // Evenement de mise a jour des programmes (relais)
         if let Some(programmes) = &configuration.programmes {
             let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_PROGRAMMES)
                 .exchanges(vec![Securite::L2Prive])

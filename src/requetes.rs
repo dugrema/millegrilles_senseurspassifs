@@ -44,6 +44,7 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                     REQUETE_GET_APPAREILS_EN_ATTENTE => requete_get_appareils_en_attente(middleware, message, gestionnaire).await,
                     REQUETE_GET_STATISTIQUES_SENSEUR => requete_get_statistiques_senseur(middleware, message, gestionnaire).await,
                     REQUETE_GET_CONFIGURATION_USAGER => requete_get_configuration_usager(middleware, message, gestionnaire).await,
+                    REQUETE_GET_TIMEZONE_APPAREIL => requete_get_timezone_appareil(middleware, message, gestionnaire).await,
                     _ => {
                         error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
                         Ok(None)
@@ -633,6 +634,7 @@ struct ReponseGetConfigurationUsager {
     ok: bool,
     user_id: String,
     timezone: Option<String>,
+    geoposition: Option<GeopositionAppareil>,
 }
 
 impl From<RowCollectionUsager> for ReponseGetConfigurationUsager {
@@ -641,6 +643,7 @@ impl From<RowCollectionUsager> for ReponseGetConfigurationUsager {
             ok: true,
             user_id: value.user_id,
             timezone: value.timezone,
+            geoposition: None,
         }
     }
 }
@@ -679,6 +682,66 @@ async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValideAct
     let reponse = ReponseGetConfigurationUsager::from(configuration_usager);
 
     Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+}
+
+#[derive(Deserialize)]
+struct RequeteGetTimezoneAppareil {
+    user_id: String,
+    uuid_appareil: String
+}
+
+#[derive(Serialize)]
+struct ReponseGetTimezoneAppareil {
+    ok: bool,
+    err: Option<String>,
+    timezone: Option<String>,
+    geoposition: Option<GeopositionAppareil>,
+}
+
+async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+                                          -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug!("requete_get_timezone_appareil Consommer requete : {:?}", & m.message);
+    let requete: RequeteGetTimezoneAppareil = m.message.get_msg().map_contenu()?;
+
+    let appareil = {
+        // Charger appareil
+        let collection_appareil =
+            middleware.get_collection_typed::<InformationAppareil>(COLLECTIONS_APPAREILS)?;
+        let filtre = doc! {CHAMP_USER_ID: &requete.user_id, CHAMP_UUID_APPAREIL: &requete.uuid_appareil};
+        match collection_appareil.find_one(filtre, None).await? {
+            Some(inner) => inner,
+            None => {
+                let reponse = ReponseGetTimezoneAppareil{
+                    ok: false, err: Some("Appareil inconnu".to_string()), timezone: None, geoposition: None};
+                return Ok(Some(middleware.formatter_reponse(reponse, None)?))
+            }
+        }
+    };
+
+    let (timezone, geoposition) = match appareil.configuration {
+        Some(configuration) => (configuration.timezone, configuration.geoposition),
+        None => (None, None)
+    };
+
+    let timezone = match timezone {
+        Some(inner) => Some(inner),
+        None => {
+            // Tenter de charger la timezone du compte usager
+            let collection = middleware.get_collection_typed::<RowCollectionUsager>(COLLECTIONS_USAGER)?;
+            let filtre = doc! { CHAMP_USER_ID: &requete.user_id };
+            match collection.find_one(filtre, None).await? {
+                Some(inner) => inner.timezone,
+                None => None
+            }
+        }
+    };
+
+    let reponse = ReponseGetTimezoneAppareil {
+        ok: true, err: None, timezone, geoposition
+    };
+    Ok(Some(middleware.formatter_reponse(reponse, None)?))
 }
 
 async fn query_aggregate<M>(

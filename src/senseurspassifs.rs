@@ -133,6 +133,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         REQUETE_GET_APPAREILS_EN_ATTENTE,
         REQUETE_GET_STATISTIQUES_SENSEUR,
         REQUETE_GET_CONFIGURATION_USAGER,
+        REQUETE_GET_TIMEZONE_APPAREIL,
     ];
     for req in requetes_privees {
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("requete.{}.{}", DOMAINE_NOM, req), exchange: Securite::L2Prive});
