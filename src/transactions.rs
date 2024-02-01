@@ -179,6 +179,7 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
 
     let document_transaction: DocAppareil = {
         let mut set_ops = doc! {};
+        let mut unset_ops = doc! {};
 
         if let Some(inner) = transaction_convertie.configuration.descriptif {
             set_ops.insert("configuration.descriptif", inner);
@@ -207,8 +208,22 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
             };
             set_ops.insert("configuration.programmes", bson_map);
         }
+        if let Some(inner) = transaction_convertie.configuration.timezone {
+            set_ops.insert("configuration.timezone".to_string(), inner);
+        } else {
+            unset_ops.insert("configuration.timezone".to_string(), true);
+        }
+        if let Some(inner) = transaction_convertie.configuration.geoposition {
+            let bson_map = match convertir_to_bson(inner) {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion geoposition en bson : {:?}", e))?
+            };
+            set_ops.insert("configuration.geoposition", bson_map);
+        } else {
+            unset_ops.insert("configuration.geoposition", true);
+        }
 
-        let ops = doc! {
+        let mut ops = doc! {
             "$set": set_ops,
             "$setOnInsert": {
                 CHAMP_CREATION: Utc::now(),
@@ -217,6 +232,9 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
+        if unset_ops.len() > 0 {
+            ops.insert("$unset", unset_ops);
+        }
 
         let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil, CHAMP_USER_ID: &user_id };
         let opts = FindOneAndUpdateOptions::builder()

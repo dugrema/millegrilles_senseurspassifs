@@ -224,6 +224,13 @@ pub struct LectureSenseur {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GeopositionAppareil {
+    latitude: Option<f32>,
+    longitude: Option<f32>,
+    accuracy: Option<f32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigurationAppareil {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptif: Option<String>,
@@ -235,6 +242,10 @@ pub struct ConfigurationAppareil {
     pub displays: Option<HashMap<String, ParametresDisplay>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geoposition: Option<GeopositionAppareil>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
