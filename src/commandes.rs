@@ -43,10 +43,11 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gesti
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR |
-        TRANSACTION_MAJ_APPAREIL => {
+        TRANSACTION_MAJ_APPAREIL |
+        TRANSACTION_SAUVEGARDER_PROGRAMME => {
             // Pour l'instant, aucune autre validation. On traite comme une transaction
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
-        },
+        }
         TRANSACTION_APPAREIL_SUPPRIMER |
         TRANSACTION_APPAREIL_RESTAURER => {
             if user_id.is_none() {

@@ -36,6 +36,7 @@ pub const TRANSACTION_MAJ_NOEUD: &str = "majNoeud";
 pub const TRANSACTION_SUPPRESSION_SENSEUR: &str = "suppressionSenseur";
 pub const TRANSACTION_INIT_APPAREIL: &str = "initAppareil";
 pub const TRANSACTION_MAJ_APPAREIL: &str = "majAppareil";
+pub const TRANSACTION_SAUVEGARDER_PROGRAMME: &str = "sauvegarderProgramme";
 pub const TRANSACTION_SENSEUR_HORAIRE: &str = "senseurHoraire";
 pub const TRANSACTION_APPAREIL_SUPPRIMER: &str = "supprimerAppareil";
 pub const TRANSACTION_APPAREIL_RESTAURER: &str = "restaurerAppareil";
@@ -268,7 +269,7 @@ pub struct ParametresDisplayLigne {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProgrammeAppareil {
-    programme_id: String,
+    pub programme_id: String,
     class: String,
     descriptif: Option<String>,
     actif: Option<bool>,

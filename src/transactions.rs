@@ -40,6 +40,7 @@ pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestio
         TRANSACTION_APPAREIL_SUPPRIMER => transaction_appareil_supprimer(middleware, transaction, gestionnaire).await,
         TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_CONFIGURATION_USAGER => transaction_maj_configuration_usager(middleware, transaction, gestionnaire).await,
+        TRANSACTION_SAUVEGARDER_PROGRAMME => transaction_sauvegarder_programme(middleware, transaction, gestionnaire).await,
         _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), action)),
     }
 }
@@ -312,6 +313,118 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
     let reponse = match middleware.formatter_reponse(&document_transaction, None) {
         Ok(reponse) => Ok(Some(reponse)),
         Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur preparation reponse : {:?}", e))
+    }?;
+
+    Ok(reponse)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionSauvegarderProgramme {
+    pub uuid_appareil: String,
+    pub programme: ProgrammeAppareil,
+    pub supprimer: Option<bool>,
+}
+
+async fn transaction_sauvegarder_programme<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
+                                                 -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: GenerateurMessages + MongoDao,
+        T: Transaction
+{
+    debug!("transaction_sauvegarder_programme Consommer transaction : {:?}", &transaction);
+    let user_id = match transaction.get_enveloppe_certificat() {
+        Some(inner) => match inner.get_user_id()? {
+            Some(user) => user.to_owned(),
+            None => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur user_id absent du certificat"))?
+        },
+        None => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur certificat absent"))?
+    };
+
+    let transaction_convertie: TransactionSauvegarderProgramme = match transaction.convertir() {
+        Ok(t) => t,
+        Err(e) => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur conversion transaction : {:?}", e))?
+    };
+    debug!("transaction_sauvegarder_programmes Transaction lue {:?}", transaction_convertie);
+
+    let document_transaction: DocAppareil = {
+        let mut set_ops = doc! {};
+        let mut unset_ops = doc! {};
+
+        let programme_id = transaction_convertie.programme.programme_id.clone();
+        if let Some(true) = transaction_convertie.supprimer {
+            unset_ops.insert(format!("configuration.programmes.{}", programme_id), true);
+        } else {
+            let bson_map = match convertir_to_bson(transaction_convertie.programme) {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur conversion programmes en bson : {:?}", e))?
+            };
+            set_ops.insert(format!("configuration.programmes.{}", programme_id), bson_map);
+        }
+
+        let mut ops = doc! {
+            "$setOnInsert": {
+                CHAMP_CREATION: Utc::now(),
+                CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+                CHAMP_USER_ID: &user_id,
+            },
+            "$currentDate": {CHAMP_MODIFICATION: true}
+        };
+        if set_ops.len() > 0 {
+            ops.insert("$set", set_ops);
+        }
+        if unset_ops.len() > 0 {
+            ops.insert("$unset", unset_ops);
+        }
+
+        let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil, CHAMP_USER_ID: &user_id };
+        let opts = FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .build();
+
+        let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+            Ok(r) => match r {
+                Some(r) => match convertir_bson_deserializable(r) {
+                    Ok(r) => r,
+                    Err(e) => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur conversion document senseur en doc TransactionMajSenseur: {:?}", e))?
+                },
+                None => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur chargement doc senseur apres MAJ"))?
+            },
+            Err(e) => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur traitement transaction senseur : {:?}", e))?
+        }
+    };
+    debug!("transaction_sauvegarder_programme Resultat maj transaction : {:?}", document_transaction);
+
+    // Evenement de mise a jour de l'appareil (web)
+    {
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
+            .exchanges(vec![Securite::L2Prive])
+            .partition(&user_id)
+            .build();
+        middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
+    }
+
+    if let Some(configuration) = &document_transaction.configuration {
+
+        // Evenement de mise a jour des programmes (relais)
+        if let Some(programmes) = &configuration.programmes {
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_PROGRAMMES)
+                .exchanges(vec![Securite::L2Prive])
+                .partition(&user_id)
+                .build();
+            let evenement_programmes = json!({
+                CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+                "programmes": programmes
+            });
+            middleware.emettre_evenement(routage_evenement, &evenement_programmes).await?;
+        }
+    }
+
+    debug!("transaction_sauvegarder_programme Resultat ajout transaction : {:?}", document_transaction);
+    let reponse = match middleware.formatter_reponse(&document_transaction, None) {
+        Ok(reponse) => Ok(Some(reponse)),
+        Err(e) => Err(format!("senseurspassifs.transaction_sauvegarder_programmes Erreur preparation reponse : {:?}", e))
     }?;
 
     Ok(reponse)
