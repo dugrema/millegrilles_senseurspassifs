@@ -43,13 +43,13 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gesti
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR |
-        TRANSACTION_MAJ_APPAREIL |
-        TRANSACTION_SAUVEGARDER_PROGRAMME => {
+        TRANSACTION_MAJ_APPAREIL => {
             // Pour l'instant, aucune autre validation. On traite comme une transaction
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         }
         TRANSACTION_APPAREIL_SUPPRIMER |
-        TRANSACTION_APPAREIL_RESTAURER => {
+        TRANSACTION_APPAREIL_RESTAURER |
+        TRANSACTION_SAUVEGARDER_PROGRAMME => {
             if user_id.is_none() {
                 Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide (user_id requis) pour message {:?}", m.correlation_id))?
             }
