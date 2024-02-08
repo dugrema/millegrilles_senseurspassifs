@@ -39,6 +39,7 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gesti
         COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire).await,
         COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire).await,
         COMMANDE_CONFIRMER_RELAI => commande_confirmer_relai(middleware, m, gestionnaire).await,
+        COMMANDE_RESET_CERTIFICATS => commande_reset_certificats(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_CONFIGURATION_USAGER => commande_maj_configuration_usager(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
@@ -458,4 +459,43 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
 struct ReponseCertificat {
     ok: Option<bool>,
     certificat: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct ReponseCommandeResetCertificat {
+    ok: bool,
+    err: Option<String>,
+}
+
+async fn commande_reset_certificats<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+{
+    debug ! ("commande_reset_certificats Consommer requete : {:?}", & m.message);
+
+    if ! (m.verifier_roles(vec![RolesCertificats::ComptePrive]) || m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)){
+        let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: false, err: Some("Acces refuse".to_string())}, None)?;
+        return Ok(Some(reponse))
+    }
+
+    let certificat = match m.message.certificat {
+        Some(inner) => inner,
+        None => Err(format!("commande_reset_certificats Certificat manquant du message"))?
+    };
+
+    let user_id = match certificat.get_user_id()? {
+        Some(inner) => inner.as_str(),
+        None => Err("commande_reset_certificats Certificat sans user_id".to_string())?
+    };
+
+    let filtre = doc!{ CHAMP_USER_ID: user_id };
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    let ops = doc! {
+        "$unset": {TRANSACTION_CHAMP_CERTIFICAT: true, PKI_DOCUMENT_CHAMP_FINGERPRINT: true},
+        "$currentDate": {CHAMP_MODIFICATION: true}
+    };
+    collection.update_many(filtre, ops, None).await?;
+
+    let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: true, err: None}, None)?;
+    Ok(Some(reponse))
 }
