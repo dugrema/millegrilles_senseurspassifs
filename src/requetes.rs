@@ -183,6 +183,7 @@ async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageVal
             CHAMP_INSTANCE_ID: 1,
             "derniere_lecture": 1,
             "configuration.displays": 1,
+            "configuration.descriptif": 1,
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
