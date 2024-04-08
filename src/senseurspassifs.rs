@@ -1,35 +1,34 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::error::Error;
 use std::sync::Arc;
 
 use log::{debug, error, warn};
 use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::bson::{DateTime, doc, Document};
 use millegrilles_common_rust::certificats::{calculer_fingerprint, charger_certificat, ValidateurX509, VerificateurPermissions};
-// use millegrilles_common_rust::chiffrage_cle::CommandeSauvegarderCle;
-use millegrilles_common_rust::{chrono, chrono::Utc};
+use millegrilles_common_rust::{chrono, chrono::Utc, get_domaine_action};
 use millegrilles_common_rust::chrono::Timelike;
 use millegrilles_common_rust::configuration::ConfigMessages;
 use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::db_structs::TransactionValide;
 use millegrilles_common_rust::domaines::GestionnaireDomaine;
-use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{EmetteurNotificationsTrait, Middleware, sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneAndUpdateOptions, FindOneOptions, FindOptions, Hint, ReturnDocument, UpdateOptions};
-use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
-use millegrilles_common_rust::recepteur_messages::{MessageValideAction, TypeMessage};
+use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType, TypeMessageOut};
+use millegrilles_common_rust::recepteur_messages::{MessageValide, TypeMessage};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::serde_json::{json, Value};
 use millegrilles_common_rust::tokio::time::{Duration, sleep};
 use millegrilles_common_rust::tokio_stream::StreamExt;
-use millegrilles_common_rust::transactions::{TraiterTransaction, Transaction, TransactionImpl};
-use millegrilles_common_rust::verificateur::VerificateurMessage;
+use millegrilles_common_rust::transactions::{TraiterTransaction, Transaction};
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, ChampIndex, IndexOptions, MongoDao, convertir_to_bson, convertir_bson_value, filtrer_doc_id, convertir_to_bson_array};
 use millegrilles_common_rust::mongodb::Collection;
-use crate::commandes::consommer_commande;
+use millegrilles_common_rust::error::Error;
 
+use crate::commandes::consommer_commande;
 use crate::requetes::consommer_requete;
 use crate::common::*;
 use crate::evenements::evenement_appareil_presence;
@@ -43,7 +42,7 @@ pub struct GestionnaireSenseursPassifs {
 
 #[async_trait]
 impl TraiterTransaction for GestionnaireSenseursPassifs {
-    async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
+    async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
         where M: ValidateurX509 + GenerateurMessages + MongoDao
     {
         aiguillage_transaction(middleware, transaction, &self).await
@@ -58,50 +57,52 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         Some(COLLECTIONS_NOM.to_string())
     }
 
-    fn get_collections_documents(&self) -> Vec<String> { vec![
-        COLLECTIONS_INSTANCES.to_string(),
-        COLLECTIONS_LECTURES.to_string(),
-        COLLECTIONS_APPAREILS.to_string(),
-        COLLECTIONS_SENSEURS_HORAIRE.to_string(),
-        COLLECTIONS_RELAIS.to_string(),
-        COLLECTIONS_USAGER.to_string(),
-    ] }
-
-    fn get_q_transactions(&self) -> Option<String> {
-        Some(format!("{}/transactions", DOMAINE_NOM))
+    fn get_collections_documents(&self) -> Result<Vec<String>, Error> {
+        Ok(vec![
+            COLLECTIONS_INSTANCES.to_string(),
+            COLLECTIONS_LECTURES.to_string(),
+            COLLECTIONS_APPAREILS.to_string(),
+            COLLECTIONS_SENSEURS_HORAIRE.to_string(),
+            COLLECTIONS_RELAIS.to_string(),
+            COLLECTIONS_USAGER.to_string(),
+        ])
     }
 
-    fn get_q_volatils(&self) -> Option<String> {
-        Some(format!("{}/volatils", DOMAINE_NOM))
+    fn get_q_transactions(&self) -> Result<Option<String>, Error> {
+        Ok(Some(format!("{}/transactions", DOMAINE_NOM)))
     }
 
-    fn get_q_triggers(&self) -> Option<String> {
-        Some(format!("{}/triggers", DOMAINE_NOM))
+    fn get_q_volatils(&self) -> Result<Option<String>, Error> {
+        Ok(Some(format!("{}/volatils", DOMAINE_NOM)))
     }
 
-    fn preparer_queues(&self) -> Vec<QueueType> { preparer_queues(self) }
+    fn get_q_triggers(&self) -> Result<Option<String>, Error> {
+        Ok(Some(format!("{}/triggers", DOMAINE_NOM)))
+    }
+
+    fn preparer_queues(&self) -> Result<Vec<QueueType>, Error> { Ok(preparer_queues(self)) }
 
     fn chiffrer_backup(&self) -> bool {
         true
     }
 
-    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), String> where M: MongoDao + ConfigMessages {
+    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), Error> where M: MongoDao + ConfigMessages {
         preparer_index_mongodb_custom(middleware, &self).await
     }
 
-    async fn consommer_requete<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>> where M: Middleware + 'static {
+    async fn consommer_requete<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Error> where M: Middleware + 'static {
         consommer_requete(middleware, message, &self).await
     }
 
-    async fn consommer_commande<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>> where M: Middleware + 'static {
+    async fn consommer_commande<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Error> where M: Middleware + 'static {
         consommer_commande(middleware, message, &self).await
     }
 
-    async fn consommer_transaction<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>> where M: Middleware + 'static {
+    async fn consommer_transaction<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Error> where M: Middleware + 'static {
         consommer_transaction(middleware, message, self).await
     }
 
-    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>> where M: Middleware + 'static {
+    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Error> where M: Middleware + 'static {
         consommer_evenement(middleware, message, self).await
     }
 
@@ -109,11 +110,14 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
         entretien(middleware).await
     }
 
-    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule) -> Result<(), Box<dyn Error>> where M: Middleware + 'static {
-        traiter_cedule(middleware, trigger).await
+    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule) -> Result<(), Error> where M: Middleware + 'static {
+        traiter_cedule(middleware, self, trigger).await
     }
 
-    async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T) -> Result<Option<MessageMilleGrille>, String> where M: ValidateurX509 + GenerateurMessages + MongoDao, T: Transaction {
+    async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide)
+        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+        where M: ValidateurX509 + GenerateurMessages + MongoDao
+    {
         aiguillage_transaction(middleware, transaction, &self).await
     }
 }
@@ -183,7 +187,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     // Queue de messages volatils (requete, commande, evenements)
     queues.push(QueueType::ExchangeQueue (
         ConfigQueue {
-            nom_queue: gestionnaire.get_q_volatils().expect("get_q_volatils").into(),
+            nom_queue: gestionnaire.get_q_volatils().expect("get_q_volatils OK").expect("get_q_volatils Some").into(),
             routing_keys: rk_volatils,
             ttl: DEFAULT_Q_TTL.into(),
             durable: false,
@@ -214,7 +218,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
     // Queue de transactions
     queues.push(QueueType::ExchangeQueue (
         ConfigQueue {
-            nom_queue: gestionnaire.get_q_transactions().expect("get_q_transactions").into(),
+            nom_queue: gestionnaire.get_q_transactions().expect("get_q_transactions Ok").expect("get_q_transactions Some").into(),
             routing_keys: rk_transactions,
             ttl: None,
             durable: false,
@@ -229,7 +233,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 }
 
 /// Creer index MongoDB
-pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), String>
+pub async fn preparer_index_mongodb_custom<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Error>
     where M: MongoDao + ConfigMessages
 {
     // Index senseurs
@@ -386,7 +390,7 @@ pub async fn entretien<M>(_middleware: Arc<M>)
     }
 }
 
-pub async fn traiter_cedule<M>(middleware: &M, trigger: &MessageCedule) -> Result<(), Box<dyn Error>>
+pub async fn traiter_cedule<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs, trigger: &MessageCedule) -> Result<(), Error>
 where M: Middleware + 'static {
     // let message = trigger.message;
 
@@ -397,11 +401,11 @@ where M: Middleware + 'static {
         return Ok(())
     }
 
-    let minute = trigger.get_date().get_datetime().minute();
+    let minute = trigger.get_date().minute();
 
     // Faire l'aggretation des lectures
     // Va chercher toutes les lectures non traitees de l'heure precedente (-65 minutes)
-    if let Err(e) = generer_transactions_lectures_horaires(middleware).await {
+    if let Err(e) = generer_transactions_lectures_horaires(middleware, gestionnaire).await {
         error!("traiter_cedule Erreur generer_transactions : {:?}", e);
     }
 
@@ -415,43 +419,47 @@ where M: Middleware + 'static {
     Ok(())
 }
 
-async fn consommer_evenement<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-where
-    M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+async fn consommer_evenement<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
-    debug!("senseurspassifs.consommer_evenement Consommer evenement : {:?}", &m.message);
+    debug!("senseurspassifs.consommer_evenement Consommer evenement : {:?}", &m.type_message);
 
     // Autorisation : doit etre de niveau 2.prive, 3.protege ou 4.secure
-    match m.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
+    match m.certificat.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])? {
         true => Ok(()),
-        false => Err(format!("senseurspassifs.consommer_evenement: Evenement invalide (pas 2.prive, 3.protege ou 4.secure)")),
+        false => Err(Error::Str("senseurspassifs.consommer_evenement: Evenement invalide (pas 2.prive, 3.protege ou 4.secure)")),
     }?;
 
-    match m.action.as_str() {
+    let (_, action) = get_domaine_action!(m.type_message);
+
+    match action.as_str() {
         EVENEMENT_LECTURE => { evenement_domaine_lecture(middleware, &m, gestionnaire).await?; Ok(None) },
-        EVENEMENT_PRESENCE_APPAREIL => { evenement_appareil_presence(middleware, &m, gestionnaire).await?; Ok(None) },
-        _ => Err(format!("senseurspassifs.consommer_evenement: Mauvais type d'action pour une transaction : {}", m.action))?,
+        EVENEMENT_PRESENCE_APPAREIL => { evenement_appareil_presence(middleware, &m).await?; Ok(None) },
+        _ => Err(format!("senseurspassifs.consommer_evenement: Mauvais type d'action pour une transaction : {}", action))?,
     }
 }
 
-async fn consommer_transaction<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+async fn consommer_transaction<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage
+    M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("senseurspassifs.consommer_transaction Consommer transaction : {:?}", &m.message);
 
     // Autorisation : doit etre de niveau 2.prive, 3.protege ou 4.secure
-    match m.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
+    match m.certificat.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])? {
         true => Ok(()),
         false => {
-            match m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
+            match m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)? {
                 true => Ok(()),
                 false => Err(format!("senseurspassifs.consommer_transaction: Trigger cedule autorisation invalide (pas 4.secure ou proprietaire)"))
             }
         },
     }?;
 
-    match m.action.as_str() {
+    let (_, action) = get_domaine_action!(m.type_message);
+
+    match action.as_str() {
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_LECTURE |
@@ -462,6 +470,6 @@ where
         TRANSACTION_APPAREIL_RESTAURER => {
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         },
-        _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", m.action))?,
+        _ => Err(format!("senseurspassifs.consommer_transaction: Mauvais type d'action pour une transaction : {}", action))?,
     }
 }

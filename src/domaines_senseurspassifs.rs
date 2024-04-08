@@ -161,60 +161,52 @@ async fn entretien<M>(middleware: Arc<M>, gestionnaire: &'static GestionnaireSen
     info!("domaines_senseurspassifs.entretien : Fin thread");
 }
 
-async fn consommer(
-    _middleware: Arc<impl ValidateurX509 + GenerateurMessages + MongoDao>,
-    mut rx: Receiver<TypeMessage>,
-    map_senders: HashMap<String, Sender<TypeMessage>>
-) {
-    info!("domaines_senseurspassifs.consommer : Debut thread, mapping : {:?}", map_senders.keys());
-
-    while let Some(message) = rx.recv().await {
-        match &message {
-            TypeMessage::Valide(m) => {
-                warn!("domaines_senseurspassifs.consommer: Message valide sans routing key/action : {:?}", m.message);
-            },
-            TypeMessage::ValideAction(m) => {
-                let contenu = &m.message;
-                let rk = m.routing_key.as_str();
-                let action = m.action.as_str();
-                let domaine = m.domaine.as_str();
-                let nom_q = m.q.as_str();
-                debug!("domaines_senseurspassifs.consommer: Traiter message valide (action: {}, rk: {}, q: {}): {:?}", action, rk, nom_q, contenu);
-
-                // Tenter de mapper avec le nom de la Q (ne fonctionnera pas pour la Q de reponse)
-                let sender = match map_senders.get(nom_q) {
-                    Some(sender) => {
-                        debug!("domaines_senseurspassifs.consommer Mapping message avec nom_q: {}", nom_q);
-                        sender
-                    },
-                    None => {
-                        match map_senders.get(domaine) {
-                            Some(sender) => {
-                                debug!("domaines_senseurspassifs.consommer Mapping message avec domaine: {}", domaine);
-                                sender
-                            },
-                            None => {
-                                error!("domaines_senseurspassifs.consommer Message de queue ({}) et domaine ({}) inconnu, on le drop", nom_q, domaine);
-                                continue  // On skip
-                            },
-                        }
-                    }
-                };
-
-                match sender.send(message).await {
-                    Ok(()) => (),
-                    Err(e) => {
-                        error!("domaines_senseurspassifs.consommer Erreur consommer message {:?}", e)
-                    }
-                }
-            },
-            TypeMessage::Certificat(_) => (),  // Rien a faire
-            TypeMessage::Regeneration => (),   // Rien a faire
-        }
-    }
-
-    info!("domaines_senseurspassifs.consommer: Fin thread : {:?}", map_senders.keys());
-}
+// async fn consommer(
+//     _middleware: Arc<impl ValidateurX509 + GenerateurMessages + MongoDao>,
+//     mut rx: Receiver<TypeMessage>,
+//     map_senders: HashMap<String, Sender<TypeMessage>>
+// ) {
+//     info!("domaines_senseurspassifs.consommer : Debut thread, mapping : {:?}", map_senders.keys());
+//
+//     while let Some(message) = rx.recv().await {
+//         match &message {
+//             TypeMessage::Valide(m) => {
+//                 debug!("domaines_senseurspassifs.consommer: Traiter message valide {}", m.type_message);
+//
+//                 // Tenter de mapper avec le nom de la Q (ne fonctionnera pas pour la Q de reponse)
+//                 let sender = match map_senders.get(nom_q) {
+//                     Some(sender) => {
+//                         debug!("domaines_senseurspassifs.consommer Mapping message avec nom_q: {}", nom_q);
+//                         sender
+//                     },
+//                     None => {
+//                         match map_senders.get(domaine) {
+//                             Some(sender) => {
+//                                 debug!("domaines_senseurspassifs.consommer Mapping message avec domaine: {}", domaine);
+//                                 sender
+//                             },
+//                             None => {
+//                                 error!("domaines_senseurspassifs.consommer Message de queue ({}) et domaine ({}) inconnu, on le drop", nom_q, domaine);
+//                                 continue  // On skip
+//                             },
+//                         }
+//                     }
+//                 };
+//
+//                 match sender.send(message).await {
+//                     Ok(()) => (),
+//                     Err(e) => {
+//                         error!("domaines_senseurspassifs.consommer Erreur consommer message {:?}", e)
+//                     }
+//                 }
+//             },
+//             TypeMessage::Certificat(_) => (),  // Rien a faire
+//             TypeMessage::Regeneration => (),   // Rien a faire
+//         }
+//     }
+//
+//     info!("domaines_senseurspassifs.consommer: Fin thread : {:?}", map_senders.keys());
+// }
 
 // #[cfg(test)]
 // mod test_integration {

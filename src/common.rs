@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
-use millegrilles_common_rust::formatteur_messages::DateEpochSeconds;
+use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::serde_json::Value;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
+use millegrilles_common_rust::mongo_dao::opt_chrono_datetime_as_bson_datetime;
 
 pub const DOMAINE_NOM: &str = "SenseursPassifs";
 pub const ROLE_RELAI_NOM: &str = "senseurspassifs_relai";
@@ -118,7 +120,8 @@ impl TransactionMajNoeud {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LectureTransaction {
-    pub timestamp: DateEpochSeconds,
+    #[serde(with="epochseconds")]
+    pub timestamp: DateTime<Utc>,
     pub valeur: f64,
 }
 
@@ -131,8 +134,10 @@ pub struct InformationAppareil {
     pub descriptif: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub derniere_lecture: Option<DateEpochSeconds>,
+    #[serde(default,
+    serialize_with = "optionepochseconds::serialize",
+    deserialize_with = "opt_chrono_datetime_as_bson_datetime::deserialize")]
+    pub derniere_lecture: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ConfigurationAppareil>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -167,8 +172,10 @@ pub struct DocAppareil {
     pub fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub derniere_lecture: Option<DateEpochSeconds>,
+    #[serde(default,
+    serialize_with = "optionepochseconds::serialize",
+    deserialize_with = "opt_chrono_datetime_as_bson_datetime::deserialize")]
+    pub derniere_lecture: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ConfigurationAppareil>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,7 +226,8 @@ pub struct ParamsDisplay {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LectureSenseur {
-    pub timestamp: DateEpochSeconds,
+    #[serde(with="epochseconds")]
+    pub timestamp: DateTime<Utc>,
     #[serde(rename="type")]
     pub type_: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -279,7 +287,8 @@ pub struct ProgrammeAppareil {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionLectureHoraire {
-    pub heure: DateEpochSeconds,
+    #[serde(with="epochseconds")]
+    pub heure: DateTime<Utc>,
     pub user_id: String,
     pub uuid_appareil: String,
     pub senseur_id: String,

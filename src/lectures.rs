@@ -1,28 +1,27 @@
 use std::cmp::max;
 use std::collections::HashMap;
-use std::error::Error;
-use std::time::Duration;
 use log::{debug, error, info, warn};
 use millegrilles_common_rust::bson::{DateTime as BsonDateTime, doc};
-use millegrilles_common_rust::certificats::ValidateurX509;
+use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::{chrono, serde_json};
-use millegrilles_common_rust::chiffrage_cle::CleDechiffree;
 use millegrilles_common_rust::chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use millegrilles_common_rust::constantes::Securite;
-use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array, convertir_value_mongodate, MongoDao};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions, Hint, UpdateOptions};
-use millegrilles_common_rust::recepteur_messages::MessageValideAction;
-use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::constantes::*;
-use millegrilles_common_rust::dechiffrage::get_cles_dechiffrees;
 use millegrilles_common_rust::serde_json::Value;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
-use millegrilles_common_rust::middleware::EmetteurNotificationsTrait;
+use millegrilles_common_rust::middleware::{EmetteurNotificationsTrait, sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
 use millegrilles_common_rust::notifications::NotificationMessageInterne;
+use millegrilles_common_rust::error::Error;
+use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use millegrilles_common_rust::recepteur_messages::MessageValide;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
+use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
 use crate::common::*;
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
@@ -39,36 +38,36 @@ struct LectureAppareilInfo {
 
 impl LectureAppareilInfo {
 
-    fn calculer_derniere_lecture(&self) -> Option<DateEpochSeconds> {
-        let mut date_lecture: &chrono::DateTime<Utc> = &chrono::MIN_DATETIME;
+    fn calculer_derniere_lecture(&self) -> Option<DateTime<Utc>> {
+        let mut date_lecture: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
         for l in self.lectures_senseurs.values() {
-            date_lecture = &l.timestamp.get_datetime().max(date_lecture);
+            date_lecture = l.timestamp.max(date_lecture);
         }
 
-        match date_lecture == &chrono::MIN_DATETIME {
+        match &date_lecture == &DateTime::<Utc>::MIN_UTC {
             true => {
                 None
             },
             false => {
-                Some(DateEpochSeconds::from(date_lecture.to_owned()))
+                Some(date_lecture)
             }
         }
     }
 
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct EvenementLecture {
     instance_id: String,
-    lecture: Option<MessageMilleGrille>,
+    lecture: Option<MessageMilleGrillesOwned>,
     lecture_relayee: Option<LectureAppareilInfo>,
 }
 
 impl EvenementLecture {
 
-    async fn recuperer_info<M,S>(self, middleware: &M, fingerprint_relai: S) -> Result<LectureAppareilInfo, Box<dyn Error>>
+    async fn recuperer_info<M,S>(self, middleware: &M, fingerprint_relai: S) -> Result<LectureAppareilInfo, Error>
         where
-            M: VerificateurMessage + ValidateurX509 + MongoDao,
+            M: ValidateurX509 + MongoDao,
             S: AsRef<str>
     {
         if self.lecture.is_some() {
@@ -78,56 +77,72 @@ impl EvenementLecture {
             // Charger une lecture relayee
             self.charger_lecture_relayee(middleware, fingerprint_relai).await
         } else {
-            Err(format!("lectures.EvenementLecture.recuperer_info Aucun contenu lecture/lecture_relayee"))?
+            Err(Error::Str("lectures.EvenementLecture.recuperer_info Aucun contenu lecture/lecture_relayee"))?
         }
     }
 
-    async fn charger_lecture_directe<M>(self, middleware: &M) -> Result<LectureAppareilInfo, Box<dyn Error>>
-        where M: VerificateurMessage + ValidateurX509
+    async fn charger_lecture_directe<M>(self, middleware: &M) -> Result<LectureAppareilInfo, Error>
+        where M: ValidateurX509
     {
         let lecture = match self.lecture {
             Some(inner) => inner,
-            None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Field lecture est vide"))?
+            None => Err(Error::Str("lectures.EvenementLecture.charger_lecture_directe Field lecture est vide"))?
         };
 
-        let fingerprint_certificat = lecture.pubkey.clone();
+        // let fingerprint_certificat = lecture.pubkey.clone();
+        // let certificat = match &lecture.certificat {
+        //     Some(c) => {
+        //         middleware.charger_enveloppe(c, Some(fingerprint_certificat.as_str()), None).await?
+        //     },
+        //     None => {
+        //         match middleware.get_certificat(fingerprint_certificat.as_str()).await {
+        //             Some(c) => c,
+        //             None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Certificat inconnu : {}", fingerprint_certificat))?
+        //         }
+        //     }
+        // };
 
-        let certificat = match &lecture.certificat {
-            Some(c) => {
-                middleware.charger_enveloppe(c, Some(fingerprint_certificat.as_str()), None).await?
-            },
-            None => {
-                match middleware.get_certificat(fingerprint_certificat.as_str()).await {
-                    Some(c) => c,
-                    None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Certificat inconnu : {}", fingerprint_certificat))?
-                }
-            }
+        // Recuperer le certificat, valider le message.
+        let certificat = {
+            let lecture_buffer: MessageMilleGrillesBufferDefault = lecture.clone().try_into()?;
+            let mut lecture_ref = lecture_buffer.parse()?;
+            lecture_ref.verifier_signature()?;
+            middleware.valider_certificat_message(&lecture_ref, true).await?
         };
 
         // Valider le message, extraire enveloppe
-        let mut message_serialise = MessageSerialise::from_parsed(lecture)?;
-        message_serialise.certificat = Some(certificat);
+        // let mut message_serialise = MessageSerialise::from_parsed(lecture)?;
+        // message_serialise.certificat = Some(certificat);
 
-        let validation = middleware.verifier_message(&mut message_serialise, None)?;
-        if ! validation.valide() { Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture echec validation"))? }
+        // let validation = middleware.verifier_message(&mut message_serialise, None)?;
+        // if ! validation.valide() { Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture echec validation"))? }
+        // let lecture: LectureAppareil = message_serialise.parsed.map_contenu()?;
 
-        let lecture: LectureAppareil = message_serialise.parsed.map_contenu()?;
-
-        let (user_id, uuid_appareil) = match message_serialise.certificat {
-            Some(c) => {
-                let user_id = match c.get_user_id()? {
-                    Some(u) => u.to_owned(),
-                    None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture user_ud manquant du certificat"))?
-                };
-                debug!("lectures.EvenementLecture.charger_lecture_directe Certificat lecture subject: {:?}", c.subject());
-                let uuid_appareil = match c.subject()?.get("commonName") {
-                    Some(s) => s.to_owned(),
-                    None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat sans uuid_appareil (commonName)"))?
-                };
-                (user_id, uuid_appareil)
-            },
-            None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat manquant"))?
+        let lecture: LectureAppareil = lecture.deserialize()?;
+        let user_id = match certificat.get_user_id()? {
+            Some(inner) => inner,
+            None => Err(Error::Str("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture user_ud manquant du certificat"))?
         };
+        let uuid_appareil = match certificat.subject()?.get("commonName") {
+            Some(inner) => inner.to_owned(),
+            None => Err(Error::Str("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat sans uuid_appareil (commonName)"))?
+        };
+
+        // let (user_id, uuid_appareil) = match message_serialise.certificat {
+        //     Some(c) => {
+        //         let user_id = match c.get_user_id()? {
+        //             Some(u) => u.to_owned(),
+        //             None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture user_ud manquant du certificat"))?
+        //         };
+        //         debug!("lectures.EvenementLecture.charger_lecture_directe Certificat lecture subject: {:?}", c.subject());
+        //         let uuid_appareil = match c.subject()?.get("commonName") {
+        //             Some(s) => s.to_owned(),
+        //             None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat sans uuid_appareil (commonName)"))?
+        //         };
+        //         (user_id, uuid_appareil)
+        //     },
+        //     None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat manquant"))?
+        // };
 
         Ok(LectureAppareilInfo {
             uuid_appareil,
@@ -139,9 +154,9 @@ impl EvenementLecture {
     }
 
     async fn charger_lecture_relayee<M,S>(self, middleware: &M, fingerprint_relai: S)
-        -> Result<LectureAppareilInfo, Box<dyn Error>>
+        -> Result<LectureAppareilInfo, Error>
         where
-            M: VerificateurMessage + ValidateurX509 + MongoDao,
+            M: ValidateurX509 + MongoDao,
             S: AsRef<str>
     {
         let fingerprint_relai = fingerprint_relai.as_ref();
@@ -181,19 +196,16 @@ impl EvenementLecture {
 }
 
 
-pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<(), Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
     debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
-    let lecture: EvenementLecture = m.message.get_msg().map_contenu()?;
-    debug!("Evenement mappe : {:?}", lecture);
+    let lecture: EvenementLecture = deser_message_buffer!(m.message);
 
-    let certificat = match m.message.certificat.as_ref() {
-        Some(inner) => inner.as_ref(),
-        None => Err(format!("evenement_domaine_lecture Erreur chargement certificat (absent)"))?
-    };
+    let certificat = m.certificat.as_ref();
 
-    let fingerprint_relai = certificat.fingerprint.as_str();
+    let fingerprint_relai = certificat.fingerprint()?;
 
     // Extraire instance, convertir evenement en LectureAppareilInfo
     let instance_id = lecture.instance_id.clone();
@@ -209,12 +221,7 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
 
     // Convertir date en format DateTime pour conserver, ajouter filtre pour eviter de
     // mettre a jour un senseur avec informations plus vieilles
-    let derniere_lecture_dt = match derniere_lecture.as_ref()  {
-        Some(l) => {
-            Some(l.get_datetime())
-        },
-        None => None
-    };
+    let derniere_lecture_dt = derniere_lecture.as_ref();
 
     let mut set_ops = doc! {
         CHAMP_INSTANCE_ID: &instance_id,
@@ -275,8 +282,7 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
     };
 
     // Bouncer l'evenement sur tous les exchanges appropries
-    let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE)
-        .exchanges(vec![Securite::L2Prive])
+    let routage = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_LECTURE_CONFIRMEE, vec![Securite::L2Prive])
         .partition(info_senseur.user_id.as_str())
         .build();
 
@@ -308,14 +314,14 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValideActio
     Ok(())
 }
 
-async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) -> Result<(), Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
 
     for (senseur_id, valeur) in &lecture.lectures_senseurs {
 
-        let heure = heure_juste(valeur.timestamp.get_datetime());
+        let heure = heure_juste(&valeur.timestamp);
 
         let filtre = doc!{
             CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
@@ -352,14 +358,17 @@ async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) ->
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LecturesCumulees {
     user_id: String,
-    heure: Value,
+    #[serde(default,
+    serialize_with = "epochseconds::serialize",
+    deserialize_with = "chrono_datetime_as_bson_datetime::deserialize")]
+    heure: DateTime<Utc>,
     uuid_appareil: String,
     senseur_id: String,
     lectures: Vec<LectureSenseur>,
 }
 
-pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao
+pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     // Donner 5 minutes apres l'heure pour completer traitement des evenements/lectures (65 minutes).
     let date_aggregation = Utc::now() - chrono::Duration::minutes(65);
@@ -372,7 +381,7 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result
     let mut curseur = collection.find(filtre, None).await?;
     while let Some(d) = curseur.next().await {
         match convertir_bson_deserializable::<LecturesCumulees>(d?) {
-            Ok(l) => generer_transactions(middleware, l).await?,
+            Ok(l) => generer_transactions(middleware, gestionnaire, l).await?,
             Err(e) => {
                 error!("lectures.generer_transactions_lectures_horaires Erreur mapping LecturesCumulees : {:?}", e);
             }
@@ -382,8 +391,8 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M) -> Result
     Ok(())
 }
 
-async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages
+async fn generer_transactions<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs, lectures: LecturesCumulees) -> Result<(), Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
         lectures.heure, lectures.user_id, lectures.uuid_appareil, lectures.senseur_id);
@@ -391,7 +400,7 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
     let heure = lectures.heure;
     debug!("Heure : {:?}", heure);
 
-    let heure = convertir_value_mongodate(heure)?;
+    // let heure = convertir_value_mongodate(heure)?;
 
     // On ne traite pas les donnees de l'heure courante.
     // let mut donnees_lectures: Vec<LectureSenseur> = lectures.lectures.into_iter()
@@ -413,7 +422,7 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
 
     // Generer transactions pour chaque heure
     // for (heure, groupe) in groupes_heures {
-        // let heure_dt = DateEpochSeconds::from_i64(heure);
+        // let heure_dt = DateTime<Utc>::from_i64(heure);
         // let heure_max = lectures.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
         // debug!("Generer transactions pour heure {:?} (< {:?})", lectures.heure, heure_max);
 
@@ -473,12 +482,17 @@ async fn generer_transactions<M>(middleware: &M, lectures: LecturesCumulees) -> 
             avg: moyenne
         };
 
-        let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE)
-            .exchanges(vec![Securite::L4Secure])
-            .build();
+        // let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE, vec![Securite::L4Secure])
+        //     .blocking(false)
+        //     .build();
 
         debug!("Soumettre transaction : {:?}", transaction);
-        middleware.soumettre_transaction(routage, &transaction, false).await?;
+        // middleware.soumettre_transaction(routage, &transaction).await?;
+        if let Err(e) = sauvegarder_traiter_transaction_serializable(
+            middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE).await
+        {
+            error!("generer_transactions Erreur traitemnet transaction {:?}", e)
+        }
     // }
 
     Ok(())
@@ -490,7 +504,7 @@ fn heure_juste(date: &DateTime<Utc>) -> DateTime<Utc> {
         .with_nanosecond(0).expect("with_nanosecond")
 }
 
-pub async fn detecter_presence_appareils<M>(middleware: &M) -> Result<(), Box<dyn Error>>
+pub async fn detecter_presence_appareils<M>(middleware: &M) -> Result<(), Error>
     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
     {
@@ -512,7 +526,7 @@ pub async fn detecter_presence_appareils<M>(middleware: &M) -> Result<(), Box<dy
 }
 
 /// param present : true si detecter changement d'absent vers present, false inverse
-async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool) -> Result<(), Box<dyn Error>>
+async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool) -> Result<(), Error>
     where M:  MongoDao
 {
     // Date limite pour detecter presence : < est absent, > est present
@@ -562,7 +576,7 @@ async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool
     Ok(())
 }
 
-async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &InformationAppareil, present: bool) -> Result<(), Box<dyn Error>>
+async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &InformationAppareil, present: bool) -> Result<(), Error>
     where M: MongoDao
 {
     let (champ_present, champ_inverse) = match present {
@@ -589,7 +603,7 @@ async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &Information
 }
 
 
-async fn emettre_notifications_usagers<M>(middleware: &M) -> Result<(), Box<dyn Error>>
+async fn emettre_notifications_usagers<M>(middleware: &M) -> Result<(), Error>
     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
     let filtre = doc!{
@@ -616,248 +630,250 @@ async fn emettre_notifications_usagers<M>(middleware: &M) -> Result<(), Box<dyn 
     Ok(())
 }
 
-async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNotificationUsager) -> Result<(), Box<dyn Error>>
+async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNotificationUsager) -> Result<(), Error>
     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
-    let now = Utc::now();
-
-    let mut uuid_appareils = Vec::new();
-
-    let nombre_presents = match doc_usager.presents.as_ref() {
-        Some(inner) => {
-            for app in inner {
-                uuid_appareils.push(app.as_str());
-            }
-            inner.len()
-        },
-        None => 0
-    };
-    let nombre_absents = match doc_usager.absents.as_ref() {
-        Some(inner) => {
-            for app in inner {
-                uuid_appareils.push(app.as_str());
-            }
-            inner.len()
-        },
-        None => 0
-    };
-
-    let mut map_appareils = HashMap::new();
-    let filtre = doc! {
-        CHAMP_USER_ID: &doc_usager.user_id,
-        CHAMP_UUID_APPAREIL: {"$in": uuid_appareils}
-    };
-    debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
-    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    let mut curseur = collection.find(filtre, None).await?;
-    while let Some(r) = curseur.next().await {
-        let app: InformationAppareil = convertir_bson_deserializable(r?)?;
-        debug!("emettre_notification_usager Appareil charge : {:?}", app);
-        map_appareils.insert(app.uuid_appareil.to_owned(), app);
-    }
-
-    let sujet = format!("Notifications pour {} appareils ({} avec contact perdu)", nombre_presents+nombre_absents, nombre_absents);
-
-    let mut contenu = String::new();
-    if let Some(appareils) = doc_usager.presents.as_ref() {
-        contenu.push_str("<h2>Appareils reconnectes</h2><br/>\n");
-        for app in appareils {
-            let ligne = match map_appareils.get(app) {
-                Some(inner) => {
-                    match inner.configuration.as_ref() {
-                        Some(config) => match config.descriptif.as_ref() {
-                            Some(descriptif) =>  format!("{}<br/>", descriptif),
-                            None => format!("{}<br/>", app.as_str())
-                        },
-                        None => format!("{}<br/>", app.as_str())
-                    }
-                },
-                None => format!("{}<br/>", app.as_str())
-            };
-            contenu.push_str(ligne.as_str());
-        }
-        contenu.push_str("<br/>\n")
-    }
-
-    if let Some(appareils) = doc_usager.absents.as_ref() {
-        contenu.push_str("<h2>Appareils deconnectes</h2><br/>\n");
-        for app in appareils {
-            let ligne = match map_appareils.get(app) {
-                Some(inner) => {
-                    match inner.configuration.as_ref() {
-                        Some(config) => match config.descriptif.as_ref() {
-                            Some(descriptif) =>  format!("{} (derniere lecture : {:?})<br/>", descriptif, inner.derniere_lecture),
-                            None => format!("{}<br/>", app.as_str())
-                        },
-                        None => format!("{}<br/>", app.as_str())
-                    }
-                },
-                None => format!("{}<br/>", app.as_str())
-            };
-            contenu.push_str(ligne.as_str());
-        }
-        contenu.push_str("</br/>\n")
-    }
-
-    // Charger cle notifications usager - creer nouvelle cle au besoin
-    let cle_usager = match doc_usager.cle_id.as_ref() {
-        Some(cle_id) => {
-            debug!("Charger cle_id {}", cle_id);
-            let mut cles_dechiffrees = get_cles_dechiffrees(
-                middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await?;
-            match cles_dechiffrees.remove(cle_id) {
-                Some(inner) => Some(inner),
-                None => {
-                    warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", doc_usager.user_id);
-                    None
-                }
-            }
-        },
-        None => {
-            debug!("Generer nouvelle cle de notification pour usager {}", doc_usager.user_id);
-            None
-        }
-    };
-
-    let notification = NotificationMessageInterne {
-        from: "SenseursPassifs".to_string(),
-        subject: Some(sujet),
-        content: contenu,
-        version: 1,
-        format: "html".to_string(),
-    };
-
-    debug!("Emettre notification usager : {:?}", notification);
-
-    let cle_id = middleware.emettre_notification_usager(
-        doc_usager.user_id.as_str(), notification,
-        "info",
-        DOMAINE_NOM,
-        Some(now.timestamp() + 3 * 86400),
-        cle_usager
-    ).await?;
-
-    if doc_usager.cle_id.is_none() {
-        debug!("Conserver cle_id {} pour usager {}", cle_id, doc_usager.user_id);
-        let filtre = doc! { CHAMP_USER_ID: &doc_usager.user_id };
-        let ops = doc! {
-            "$set": { "cle_id": &cle_id },
-            "$currentDate": { CHAMP_MODIFICATION: true }
-        };
-        let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-        collection.update_one(filtre, ops, None).await?;
-    }
-
-    Ok(())
+    todo!("Fix me")
+    // let now = Utc::now();
+    //
+    // let mut uuid_appareils = Vec::new();
+    //
+    // let nombre_presents = match doc_usager.presents.as_ref() {
+    //     Some(inner) => {
+    //         for app in inner {
+    //             uuid_appareils.push(app.as_str());
+    //         }
+    //         inner.len()
+    //     },
+    //     None => 0
+    // };
+    // let nombre_absents = match doc_usager.absents.as_ref() {
+    //     Some(inner) => {
+    //         for app in inner {
+    //             uuid_appareils.push(app.as_str());
+    //         }
+    //         inner.len()
+    //     },
+    //     None => 0
+    // };
+    //
+    // let mut map_appareils = HashMap::new();
+    // let filtre = doc! {
+    //     CHAMP_USER_ID: &doc_usager.user_id,
+    //     CHAMP_UUID_APPAREIL: {"$in": uuid_appareils}
+    // };
+    // debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
+    // let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    // let mut curseur = collection.find(filtre, None).await?;
+    // while let Some(r) = curseur.next().await {
+    //     let app: InformationAppareil = convertir_bson_deserializable(r?)?;
+    //     debug!("emettre_notification_usager Appareil charge : {:?}", app);
+    //     map_appareils.insert(app.uuid_appareil.to_owned(), app);
+    // }
+    //
+    // let sujet = format!("Notifications pour {} appareils ({} avec contact perdu)", nombre_presents+nombre_absents, nombre_absents);
+    //
+    // let mut contenu = String::new();
+    // if let Some(appareils) = doc_usager.presents.as_ref() {
+    //     contenu.push_str("<h2>Appareils reconnectes</h2><br/>\n");
+    //     for app in appareils {
+    //         let ligne = match map_appareils.get(app) {
+    //             Some(inner) => {
+    //                 match inner.configuration.as_ref() {
+    //                     Some(config) => match config.descriptif.as_ref() {
+    //                         Some(descriptif) =>  format!("{}<br/>", descriptif),
+    //                         None => format!("{}<br/>", app.as_str())
+    //                     },
+    //                     None => format!("{}<br/>", app.as_str())
+    //                 }
+    //             },
+    //             None => format!("{}<br/>", app.as_str())
+    //         };
+    //         contenu.push_str(ligne.as_str());
+    //     }
+    //     contenu.push_str("<br/>\n")
+    // }
+    //
+    // if let Some(appareils) = doc_usager.absents.as_ref() {
+    //     contenu.push_str("<h2>Appareils deconnectes</h2><br/>\n");
+    //     for app in appareils {
+    //         let ligne = match map_appareils.get(app) {
+    //             Some(inner) => {
+    //                 match inner.configuration.as_ref() {
+    //                     Some(config) => match config.descriptif.as_ref() {
+    //                         Some(descriptif) =>  format!("{} (derniere lecture : {:?})<br/>", descriptif, inner.derniere_lecture),
+    //                         None => format!("{}<br/>", app.as_str())
+    //                     },
+    //                     None => format!("{}<br/>", app.as_str())
+    //                 }
+    //             },
+    //             None => format!("{}<br/>", app.as_str())
+    //         };
+    //         contenu.push_str(ligne.as_str());
+    //     }
+    //     contenu.push_str("</br/>\n")
+    // }
+    //
+    // // Charger cle notifications usager - creer nouvelle cle au besoin
+    // let cle_usager = match doc_usager.cle_id.as_ref() {
+    //     Some(cle_id) => {
+    //         debug!("Charger cle_id {}", cle_id);
+    //         let mut cles_dechiffrees = get_cles_dechiffrees(
+    //             middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await?;
+    //         match cles_dechiffrees.remove(cle_id) {
+    //             Some(inner) => Some(inner),
+    //             None => {
+    //                 warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", doc_usager.user_id);
+    //                 None
+    //             }
+    //         }
+    //     },
+    //     None => {
+    //         debug!("Generer nouvelle cle de notification pour usager {}", doc_usager.user_id);
+    //         None
+    //     }
+    // };
+    //
+    // let notification = NotificationMessageInterne {
+    //     from: "SenseursPassifs".to_string(),
+    //     subject: Some(sujet),
+    //     content: contenu,
+    //     version: 1,
+    //     format: "html".to_string(),
+    // };
+    //
+    // debug!("Emettre notification usager : {:?}", notification);
+    //
+    // let cle_id = middleware.emettre_notification_usager(
+    //     doc_usager.user_id.as_str(), notification,
+    //     "info",
+    //     DOMAINE_NOM,
+    //     Some(now.timestamp() + 3 * 86400),
+    //     cle_usager
+    // ).await?;
+    //
+    // if doc_usager.cle_id.is_none() {
+    //     debug!("Conserver cle_id {} pour usager {}", cle_id, doc_usager.user_id);
+    //     let filtre = doc! { CHAMP_USER_ID: &doc_usager.user_id };
+    //     let ops = doc! {
+    //         "$set": { "cle_id": &cle_id },
+    //         "$currentDate": { CHAMP_MODIFICATION: true }
+    //     };
+    //     let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+    //     collection.update_one(filtre, ops, None).await?;
+    // }
+    //
+    // Ok(())
 }
 
-async fn emettre_notification_appareil_usager<M>(middleware: &M, notification_appareil: NotificationAppareilUsager) -> Result<(), Box<dyn Error>>
+async fn emettre_notification_appareil_usager<M>(middleware: &M, notification_appareil: NotificationAppareilUsager) -> Result<(), Error>
     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
-    let now = Utc::now();
-
-    let doc_usager: Option<DocumentNotificationUsager> = {
-        let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-        let filtre = doc!("user_id": &notification_appareil.user_id);
-        let doc_usager = collection.find_one(filtre, None).await?;
-        match doc_usager {
-            Some(inner) => {
-                let du: DocumentNotificationUsager = convertir_bson_deserializable(inner)?;
-                Some(du)
-            },
-            None => None
-        }
-    };
-
-    let filtre = doc! {
-        CHAMP_USER_ID: &notification_appareil.user_id,
-        CHAMP_UUID_APPAREIL: &notification_appareil.uuid_appareil,
-    };
-    debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
-    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    let doc_appareil: InformationAppareil = match collection.find_one(filtre, None).await? {
-        Some(doc_appareil) => convertir_bson_deserializable(doc_appareil)?,
-        None => Err(format!("lectures.emettre_notification_appareil_usager Appareil {} inconnu", notification_appareil.uuid_appareil))?
-    };
-
-    let descriptif_appareil = doc_appareil.get_descriptif();
-
-    let sujet = format!("Notification pour {}", descriptif_appareil);
-
-    let mut contenu = String::new();
-    contenu.push_str("<h2>Notification</h2><br/>\n");
-    match notification_appareil.notification.message {
-        Some(message) => {
-            contenu.push_str(format!("<p>{}</p><br/>\n", message).as_str());
-        },
-        None => {
-            contenu.push_str("<p>Aucun message.</p>\n")
-        }
-    }
-    contenu.push_str("<br/>\n");
-
-    // Charger cle notifications usager - creer nouvelle cle au besoin
-    let cle_usager = match &doc_usager {
-        Some(d) => {
-            match &d.cle_id {
-                Some(cle_id) => {
-                    charger_cle_notification_usager(
-                        middleware, cle_id.as_ref(), notification_appareil.user_id.as_str()).await?
-                },
-                None => None,
-            }
-        },
-        None => None
-    };
-
-    let notification = NotificationMessageInterne {
-        from: "SenseursPassifs".to_string(),
-        subject: Some(sujet),
-        content: contenu,
-        version: 1,
-        format: "html".to_string(),
-    };
-
-    debug!("Emettre notification appareil usager : {:?}", notification);
-
-    let cle_presente = cle_usager.is_some();
-
-    let cle_id = middleware.emettre_notification_usager(
-        notification_appareil.user_id.as_str(), notification,
-        "info",
-        DOMAINE_NOM,
-        Some(now.timestamp() + 3 * 86400),
-        cle_usager
-    ).await?;
-
-    if cle_presente == false {
-        debug!("Conserver cle_id {} pour usager {}", cle_id, notification_appareil.user_id);
-        let filtre = doc! { CHAMP_USER_ID: &notification_appareil.user_id };
-        let ops = doc! {
-            "$set": { "cle_id": &cle_id },
-            "$currentDate": { CHAMP_MODIFICATION: true }
-        };
-        let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-        collection.update_one(filtre, ops, None).await?;
-    }
-
-    Ok(())
+    todo!("fix me")
+    // let now = Utc::now();
+    //
+    // let doc_usager: Option<DocumentNotificationUsager> = {
+    //     let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+    //     let filtre = doc!("user_id": &notification_appareil.user_id);
+    //     let doc_usager = collection.find_one(filtre, None).await?;
+    //     match doc_usager {
+    //         Some(inner) => {
+    //             let du: DocumentNotificationUsager = convertir_bson_deserializable(inner)?;
+    //             Some(du)
+    //         },
+    //         None => None
+    //     }
+    // };
+    //
+    // let filtre = doc! {
+    //     CHAMP_USER_ID: &notification_appareil.user_id,
+    //     CHAMP_UUID_APPAREIL: &notification_appareil.uuid_appareil,
+    // };
+    // debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
+    // let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    // let doc_appareil: InformationAppareil = match collection.find_one(filtre, None).await? {
+    //     Some(doc_appareil) => convertir_bson_deserializable(doc_appareil)?,
+    //     None => Err(format!("lectures.emettre_notification_appareil_usager Appareil {} inconnu", notification_appareil.uuid_appareil))?
+    // };
+    //
+    // let descriptif_appareil = doc_appareil.get_descriptif();
+    //
+    // let sujet = format!("Notification pour {}", descriptif_appareil);
+    //
+    // let mut contenu = String::new();
+    // contenu.push_str("<h2>Notification</h2><br/>\n");
+    // match notification_appareil.notification.message {
+    //     Some(message) => {
+    //         contenu.push_str(format!("<p>{}</p><br/>\n", message).as_str());
+    //     },
+    //     None => {
+    //         contenu.push_str("<p>Aucun message.</p>\n")
+    //     }
+    // }
+    // contenu.push_str("<br/>\n");
+    //
+    // // Charger cle notifications usager - creer nouvelle cle au besoin
+    // let cle_usager = match &doc_usager {
+    //     Some(d) => {
+    //         match &d.cle_id {
+    //             Some(cle_id) => {
+    //                 charger_cle_notification_usager(
+    //                     middleware, cle_id.as_ref(), notification_appareil.user_id.as_str()).await?
+    //             },
+    //             None => None,
+    //         }
+    //     },
+    //     None => None
+    // };
+    //
+    // let notification = NotificationMessageInterne {
+    //     from: "SenseursPassifs".to_string(),
+    //     subject: Some(sujet),
+    //     content: contenu,
+    //     version: 1,
+    //     format: "html".to_string(),
+    // };
+    //
+    // debug!("Emettre notification appareil usager : {:?}", notification);
+    //
+    // let cle_presente = cle_usager.is_some();
+    //
+    // let cle_id = middleware.emettre_notification_usager(
+    //     notification_appareil.user_id.as_str(), notification,
+    //     "info",
+    //     DOMAINE_NOM,
+    //     Some(now.timestamp() + 3 * 86400),
+    //     cle_usager
+    // ).await?;
+    //
+    // if cle_presente == false {
+    //     debug!("Conserver cle_id {} pour usager {}", cle_id, notification_appareil.user_id);
+    //     let filtre = doc! { CHAMP_USER_ID: &notification_appareil.user_id };
+    //     let ops = doc! {
+    //         "$set": { "cle_id": &cle_id },
+    //         "$currentDate": { CHAMP_MODIFICATION: true }
+    //     };
+    //     let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
+    //     collection.update_one(filtre, ops, None).await?;
+    // }
+    //
+    // Ok(())
 }
 
-async fn charger_cle_notification_usager<M>(middleware: &M, cle_id: &str, user_id: &str)
-    -> Result<Option<CleDechiffree>, Box<dyn Error>>
-    where M: GenerateurMessages
-{
-    debug!("charger_cle_notification_usager Charger cle_id {}", cle_id);
-    let mut cles_dechiffrees = match get_cles_dechiffrees(middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await {
-        Ok(inner) => inner,
-        Err(e) => Err(format!("lectures.charger_cle_notification_usager Erreur get_cles_dechiffrees : {:?}", e))?
-    };
-    match cles_dechiffrees.remove(cle_id) {
-        Some(inner) => Ok(Some(inner)),
-        None => {
-            warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", user_id);
-            Ok(None)
-        }
-    }
-}
+// async fn charger_cle_notification_usager<M>(middleware: &M, cle_id: &str, user_id: &str)
+//     -> Result<Option<CleDechiffree>, Error>
+//     where M: GenerateurMessages
+// {
+//     debug!("charger_cle_notification_usager Charger cle_id {}", cle_id);
+//     let mut cles_dechiffrees = match get_cles_dechiffrees(middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await {
+//         Ok(inner) => inner,
+//         Err(e) => Err(format!("lectures.charger_cle_notification_usager Erreur get_cles_dechiffrees : {:?}", e))?
+//     };
+//     match cles_dechiffrees.remove(cle_id) {
+//         Some(inner) => Ok(Some(inner)),
+//         None => {
+//             warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", user_id);
+//             Ok(None)
+//         }
+//     }
+// }

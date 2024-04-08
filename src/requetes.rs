@@ -1,39 +1,44 @@
-use std::error::Error;
 use log::{debug, error, info};
 use chrono_tz::Tz;
 
-use millegrilles_common_rust::bson::{bson, DateTime, doc, Document};
+use millegrilles_common_rust::bson::{doc, Document};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, TimeZone, DateTime as ChronoDateTime, NaiveDateTime};
-use millegrilles_common_rust::formatteur_messages::MessageMilleGrille;
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions};
-use millegrilles_common_rust::recepteur_messages::MessageValideAction;
+use millegrilles_common_rust::recepteur_messages::{MessageValide, TypeMessage};
 use millegrilles_common_rust::serde_json::{json, Value};
-use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
+use millegrilles_common_rust::error::Error;
+use millegrilles_common_rust::get_domaine_action;
+use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
 
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
 use crate::common::*;
 
-pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage
+pub async fn consommer_requete<M>(middleware: &M, message: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
-    debug!("Consommer requete : {:?}", &message.message);
+    debug!("Consommer requete : {:?}", &message.type_message);
 
     // Autorisation : On accepte les requetes de 3.protege ou 4.secure
-    let exchanges_ok = message.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]);
-    let delegation_globale = message.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE);
-    let user_id = message.get_user_id();
+    let exchanges_ok = message.certificat.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])?;
+    let delegation_globale = message.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)?;
+    let user_id = message.certificat.get_user_id()?;
+
+    let (domaine, action) = get_domaine_action!(message.type_message);
 
     if exchanges_ok || delegation_globale {
-        match message.domaine.as_str() {
+        match domaine.as_str() {
             DOMAINE_NOM => {
-                match message.action.as_str() {
+                match action.as_str() {
                     REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => requete_appareil_display_configuration(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => requete_appareil_programmes_configuration(middleware, message, gestionnaire).await,
@@ -46,20 +51,20 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                     REQUETE_GET_CONFIGURATION_USAGER => requete_get_configuration_usager(middleware, message, gestionnaire).await,
                     REQUETE_GET_TIMEZONE_APPAREIL => requete_get_timezone_appareil(middleware, message, gestionnaire).await,
                     _ => {
-                        error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
+                        error!("Message requete/action inconnue : '{}'. Message dropped.", action);
                         Ok(None)
                     },
                 }
             },
             _ => {
-                error!("Message requete/domaine inconnu : '{}'. Message dropped.", message.domaine);
+                error!("Message requete/domaine inconnu : '{}'. Message dropped.", domaine);
                 Ok(None)
             },
         }
     } else if user_id.is_some() {
-        match message.domaine.as_str() {
+        match domaine.as_str() {
             DOMAINE_NOM => {
-                match message.action.as_str() {
+                match action.as_str() {
                     REQUETE_GET_APPAREILS_USAGER => requete_appareils_usager(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => requete_appareil_display_configuration(middleware, message, gestionnaire).await,
                     REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => requete_appareil_programmes_configuration(middleware, message, gestionnaire).await,
@@ -67,18 +72,18 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
                     REQUETE_GET_STATISTIQUES_SENSEUR => requete_get_statistiques_senseur(middleware, message, gestionnaire).await,
                     REQUETE_GET_CONFIGURATION_USAGER => requete_get_configuration_usager(middleware, message, gestionnaire).await,
                     _ => {
-                        error!("Message requete/action inconnue : '{}'. Message dropped.", message.action);
+                        error!("Message requete/action inconnue : '{}'. Message dropped.", action);
                         Ok(None)
                     },
                 }
             },
             _ => {
-                error!("Message requete/domaine inconnu : '{}'. Message dropped.", message.domaine);
+                error!("Message requete/domaine inconnu : '{}'. Message dropped.", domaine);
                 Ok(None)
             },
         }
     } else {
-        error!("Message autorisation refusee : '{}'. Message dropped.", message.domaine);
+        error!("Message autorisation refusee : '{}'. Message dropped.", domaine);
         Ok(None)
     }
 }
@@ -86,18 +91,19 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValideAction, 
 struct RequeteAppareilsUsager {
 }
 
-async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("requete_appareils_usager Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsUsager = m.message.get_msg().map_contenu()?;
+    debug!("requete_appareils_usager Consommer requete : {:?}", & m.type_message);
+    let requete: RequeteAppareilsUsager = deser_message_buffer!(m.message);
 
-    let user_id = match m.get_user_id() {
+    let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
         None => {
-            let reponse = json!({"ok": false, "err": "user_id manquant"});
-            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            // let reponse = json!({"ok": false, "err": "user_id manquant"});
+            // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
         }
     };
 
@@ -143,7 +149,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValideAction, ges
     };
 
     let reponse = json!({ "ok": true, "appareils": appareils, "instance_id": &gestionnaire.instance_id });
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -151,28 +157,22 @@ struct RequeteAppareilsDisplayConfiguration {
     // uuid_appareil: String,  // Extrait du certificat, comme user_id
 }
 
-async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_appareil_display_configuration Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu()?;
+    let requete: RequeteAppareilsDisplayConfiguration = deser_message_buffer!(m.message);
 
     // Extraire user_id, uuid_appareil du certificat
-    let (user_id, uuid_appareil) = match m.message.certificat {
-        Some(c) => {
-            let user_id = match c.get_user_id()? {
-                Some(u) => u.to_owned(),
-                None => Err(format!("EvenementLecture Evenement de lecture user_id manquant du certificat"))?
-            };
-            debug!("EvenementLecture Certificat lecture subject: {:?}", c.subject());
-            let uuid_appareil = match c.subject()?.get("commonName") {
-                Some(s) => s.to_owned(),
-                None => Err(format!("EvenementLecture Evenement de lecture certificat sans uuid_appareil (commonName)"))?
-            };
-            (user_id, uuid_appareil)
-        },
-        None => Err(format!("EvenementLecture Evenement de lecture certificat manquant"))?
+    let user_id = match m.certificat.get_user_id()? {
+        Some(u) => u.to_owned(),
+        None => Err(format!("EvenementLecture Evenement de lecture user_id manquant du certificat"))?
+    };
+    debug!("EvenementLecture Certificat lecture subject: {:?}", m.certificat.subject());
+    let uuid_appareil = match m.certificat.subject()?.get("commonName") {
+        Some(s) => s.to_owned(),
+        None => Err(format!("EvenementLecture Evenement de lecture certificat sans uuid_appareil (commonName)"))?
     };
 
     let display_configuration = {
@@ -196,14 +196,15 @@ async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageVal
                 display_configuration
             },
             None => {
-                let reponse = json!({"ok": false, "err": "appareil inconnu"});
-                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                // let reponse = json!({"ok": false, "err": "appareil inconnu"});
+                // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                return Ok(Some(middleware.reponse_err(None, None, Some("appareil inconnu"))?))
             }
         }
     };
 
     let reponse = json!({ "ok": true, "display_configuration": display_configuration });
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
 #[derive(Serialize)]
@@ -212,28 +213,22 @@ struct ReponseRequeteAppareilProgrammesConfiguration {
     programmes: Option<DocAppareil>,
 }
 
-async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_appareil_programmes_configuration Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsDisplayConfiguration = m.message.get_msg().map_contenu()?;
+    let requete: RequeteAppareilsDisplayConfiguration = deser_message_buffer!(m.message);
 
     // Extraire user_id, uuid_appareil du certificat
-    let (user_id, uuid_appareil) = match m.message.certificat {
-        Some(c) => {
-            let user_id = match c.get_user_id()? {
-                Some(u) => u.to_owned(),
-                None => Err(format!("requete_appareil_programmes_configuration user_id manquant du certificat"))?
-            };
-            debug!("EvenementLecture Certificat lecture subject: {:?}", c.subject());
-            let uuid_appareil = match c.subject()?.get("commonName") {
-                Some(s) => s.to_owned(),
-                None => Err(format!("requete_appareil_programmes_configuration Certificat sans uuid_appareil (commonName)"))?
-            };
-            (user_id, uuid_appareil)
-        },
-        None => Err(format!("requete_appareil_programmes_configuration Certificat manquant"))?
+    let user_id = match m.certificat.get_user_id()? {
+        Some(u) => u.to_owned(),
+        None => Err(format!("requete_appareil_programmes_configuration user_id manquant du certificat"))?
+    };
+    debug!("EvenementLecture Certificat lecture subject: {:?}", m.certificat.subject());
+    let uuid_appareil = match m.certificat.subject()?.get("commonName") {
+        Some(s) => s.to_owned(),
+        None => Err(format!("requete_appareil_programmes_configuration Certificat sans uuid_appareil (commonName)"))?
     };
 
     let display_configuration = {
@@ -256,8 +251,9 @@ async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: Message
                 display_configuration
             },
             None => {
-                let reponse = json!({"ok": false, "err": "appareil inconnu"});
-                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                // let reponse = json!({"ok": false, "err": "appareil inconnu"});
+                // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                return Ok(Some(middleware.reponse_err(None, None, Some("appareil inconnu"))?))
             }
         }
     };
@@ -268,12 +264,12 @@ async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: Message
     };
 
     // let reponse = json!({ "ok": true, "programmes": display_configuration });
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
-async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_liste_noeuds Consommer requete : {:?}", & m.message);
 
@@ -299,7 +295,7 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValideAction, gestion
     };
 
     let reponse = json!({ "ok": true, "instances": noeuds, "instance_id": &gestionnaire.instance_id });
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -307,12 +303,12 @@ struct RequeteSenseursParUuid {
     uuid_senseurs: Vec<String>,
 }
 
-async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_liste_senseurs_par_uuid Consommer requete : {:?}", & m.message);
-    let requete: RequeteSenseursParUuid = m.message.get_msg().map_contenu()?;
+    let requete: RequeteSenseursParUuid = deser_message_buffer!(m.message);
 
     let senseurs = {
         let filtre = doc! { CHAMP_UUID_SENSEUR: {"$in": &requete.uuid_senseurs} };
@@ -341,7 +337,7 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValideActi
     };
 
     let reponse = json!({ "ok": true, "senseurs": senseurs, "instance_id": &gestionnaire.instance_id });
-    let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
+    let reponse_formattee = middleware.build_reponse(&reponse)?.0;
     debug!("Reponse formattee : {:?}", reponse_formattee);
     Ok(Some(reponse_formattee))
 }
@@ -351,12 +347,12 @@ struct RequeteSenseursPourNoeud {
     instance_id: String,
 }
 
-async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_liste_senseurs_pour_noeud Consommer requete : {:?}", & m.message);
-    let requete: RequeteSenseursPourNoeud = m.message.get_msg().map_contenu()?;
+    let requete: RequeteSenseursPourNoeud = deser_message_buffer!(m.message);
 
     let senseurs = {
         let filtre = doc! { CHAMP_INSTANCE_ID: &requete.instance_id };
@@ -385,7 +381,7 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValideAc
     };
 
     let reponse = json!({ "ok": true, "senseurs": senseurs, "instance_id": &gestionnaire.instance_id });
-    let reponse_formattee = middleware.formatter_reponse(&reponse, None)?;
+    let reponse_formattee = middleware.build_reponse(&reponse)?.0;
     debug!("Reponse formattee : {:?}", reponse_formattee);
     Ok(Some(reponse_formattee))
 }
@@ -395,12 +391,12 @@ struct RequeteGetNoeud {
     instance_id: String
 }
 
-async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_get_noeud Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetNoeud = m.message.get_msg().map_contenu()?;
+    let requete: RequeteGetNoeud = deser_message_buffer!(m.message);
 
     let noeud = {
         let filtre = doc! { };
@@ -442,7 +438,7 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValideAction, gestionnai
 
     debug!("requete_get_noeud Reponse : {:?}", reponse);
 
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -454,18 +450,19 @@ struct ReponseGetAppareilsEnAttente {
     appareils: Vec<DocAppareil>,
 }
 
-async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_get_appareils_en_attente Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetAppareilsEnAttente = m.message.get_msg().map_contenu()?;
+    let requete: RequeteGetAppareilsEnAttente = deser_message_buffer!(m.message);
 
-    let user_id = match m.get_user_id() {
+    let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
         None => {
-            let reponse = json!({"ok": false, "err": "user_id manquant"});
-            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            // let reponse = json!({"ok": false, "err": "user_id manquant"});
+            // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
         }
     };
 
@@ -504,7 +501,7 @@ async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValideAct
 
     debug!("requete_get_appareils_en_attente Reponse : {:?}", reponse);
 
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -525,18 +522,19 @@ struct ResultatStatistiquesSenseurRow {
     avg: Option<f64>,
 }
 
-async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_get_statistiques_senseur Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetStatistiquesSenseur = m.message.get_msg().map_contenu()?;
+    let requete: RequeteGetStatistiquesSenseur = deser_message_buffer!(m.message);
 
-    let user_id = match m.get_user_id() {
+    let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
         None => {
-            let reponse = json!({"ok": false, "err": "user_id manquant"});
-            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            // let reponse = json!({"ok": false, "err": "user_id manquant"});
+            // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
         }
     };
 
@@ -605,7 +603,7 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValideAct
 
     debug!("requete_get_statistiques_senseur Reponse : {:?}", reponse);
 
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
 #[derive(Deserialize)]
@@ -649,25 +647,27 @@ impl From<RowCollectionUsager> for ReponseGetConfigurationUsager {
     }
 }
 
-async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_get_configuration_usager Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetConfigurationUsager = m.message.get_msg().map_contenu()?;
+    let requete: RequeteGetConfigurationUsager = deser_message_buffer!(m.message);
 
-    let user_id = match m.get_user_id() {
+    let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
         None => {
-            if ! m.verifier_exchanges(vec![Securite::L2Prive]) {
-                let reponse = json!({"ok": false, "err": "user_id manquant (1)"});
-                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            if ! m.certificat.verifier_exchanges(vec![Securite::L2Prive])? {
+                // let reponse = json!({"ok": false, "err": "user_id manquant (1)"});
+                // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant (1)"))?))
             }
             match requete.user_id {
                 Some(inner) => inner,
                 None => {
-                    let reponse = json!({"ok": false, "err": "user_id manquant (2)"});
-                    return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                    // let reponse = json!({"ok": false, "err": "user_id manquant (2)"});
+                    // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                    return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant (2)"))?))
                 }
             }
         }
@@ -682,7 +682,7 @@ async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValideAct
 
     let reponse = ReponseGetConfigurationUsager::from(configuration_usager);
 
-    Ok(Some(middleware.formatter_reponse(&reponse, None)?))
+    Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
 #[derive(Deserialize)]
@@ -699,12 +699,12 @@ struct ReponseGetTimezoneAppareil {
     geoposition: Option<GeopositionAppareil>,
 }
 
-async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-                                          -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+                                          -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("requete_get_timezone_appareil Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetTimezoneAppareil = m.message.get_msg().map_contenu()?;
+    let requete: RequeteGetTimezoneAppareil = deser_message_buffer!(m.message);
 
     let appareil = {
         // Charger appareil
@@ -716,7 +716,7 @@ async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValideAction
             None => {
                 let reponse = ReponseGetTimezoneAppareil{
                     ok: false, err: Some("Appareil inconnu".to_string()), timezone: None, geoposition: None};
-                return Ok(Some(middleware.formatter_reponse(reponse, None)?))
+                return Ok(Some(middleware.build_reponse(reponse)?.0))
             }
         }
     };
@@ -742,15 +742,15 @@ async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValideAction
     let reponse = ReponseGetTimezoneAppareil {
         ok: true, err: None, timezone, geoposition
     };
-    Ok(Some(middleware.formatter_reponse(reponse, None)?))
+    Ok(Some(middleware.build_reponse(reponse)?.0))
 }
 
 async fn query_aggregate<M>(
     middleware: &M, user_id: &str, requete: &RequeteGetStatistiquesSenseur, grouping: &str,
     tz: &Tz, min_date: ChronoDateTime<Utc>, max_date: Option<ChronoDateTime<Utc>>
 )
-    -> Result<Vec<ResultatStatistiquesSenseurRow>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage
+    -> Result<Vec<ResultatStatistiquesSenseurRow>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     debug!("Rapport Custom sur grouping {}", grouping);
 

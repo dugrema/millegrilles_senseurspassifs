@@ -1,35 +1,41 @@
 use std::collections::HashMap;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
+
 use millegrilles_common_rust::bson::doc;
-use millegrilles_common_rust::certificats::ValidateurX509;
-use millegrilles_common_rust::chrono;
-use millegrilles_common_rust::chrono::Utc;
-use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
+use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
+use millegrilles_common_rust::{chrono, serde_json};
+use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao};
 use millegrilles_common_rust::transactions::Transaction;
 use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::db_structs::TransactionValide;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
 use millegrilles_common_rust::serde_json::json;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
+use millegrilles_common_rust::error::Error;
+use millegrilles_common_rust::middleware::sauvegarder_traiter_transaction_serializable;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 
 use crate::common::*;
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
 
-pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: ValidateurX509 + GenerateurMessages + MongoDao,
-        T: Transaction
+pub async fn aiguillage_transaction<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
-    let action = match transaction.get_routage().action.as_ref() {
-        Some(inner) => inner.as_str(),
-        None => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} n'a pas d'action - SKIP", transaction.get_uuid_transaction()))?
+    let action = match transaction.transaction.routage.as_ref() {
+        Some(inner) => match inner.action.as_ref() {
+            Some(inner) => inner.clone(),
+            None => Err(Error::String(format!("senseurspassifs.aiguillage_transaction: Transaction {} n'a pas d'action - SKIP", transaction.transaction.id)))?
+        },
+        None => Err(Error::String(format!("senseurspassifs.aiguillage_transaction: Transaction {} n'a pas d'action - SKIP", transaction.transaction.id)))?
     };
 
     debug!("aiguillage_transaction {}", action);
 
-    match action {
+    match action.as_str() {
         TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
         TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
@@ -41,29 +47,20 @@ pub async fn aiguillage_transaction<M, T>(middleware: &M, transaction: T, gestio
         TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_CONFIGURATION_USAGER => transaction_maj_configuration_usager(middleware, transaction, gestionnaire).await,
         TRANSACTION_SAUVEGARDER_PROGRAMME => transaction_sauvegarder_programme(middleware, transaction, gestionnaire).await,
-        _ => Err(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.get_uuid_transaction(), action)),
+        _ => Err(Error::String(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.transaction.id, action))),
     }
 }
 
-async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
-    debug!("transaction_maj_senseur Consommer transaction : {:?}", &transaction);
-    let transaction_cle = match transaction.clone().convertir::<TransactionMajSenseur>() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_maj_senseur Transaction lue {:?}", transaction_cle);
+    debug!("transaction_maj_senseur Consommer transaction : {:?}", &transaction.transaction.id);
+    let transaction_cle: TransactionMajSenseur = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
-    let user_id = match transaction.get_enveloppe_certificat() {
-        Some(inner) => match inner.get_user_id()? {
-            Some(user) => user.to_owned(),
-            None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur user_id absent du certificat"))?
-        },
-        None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur certificat absent"))?
+    let user_id = match transaction.certificat.get_user_id()? {
+        Some(user) => user,
+        None => Err(Error::Str("senseurspassifs.transaction_maj_senseur Erreur user_id absent du certificat"))?
     };
 
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
@@ -126,29 +123,34 @@ async fn transaction_maj_senseur<M, T>(middleware: &M, transaction: T, gestionna
         if let Some(_) = resultat.upserted_id {
             debug!("transaction_maj_senseur Creer transaction pour instance_id {}", transaction_cle.instance_id);
             let transaction = TransactionMajNoeud::new(&transaction_cle.instance_id);
-            let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
-                .exchanges(vec![Securite::L4Secure])
-                // .partition(&gestionnaire.instance_id)
-                .build();
-            middleware.soumettre_transaction(routage, &transaction, false).await?;
+            // let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
+            //     .exchanges(vec![Securite::L4Secure])
+            //     // .partition(&gestionnaire.instance_id)
+            //     .blocking(false)
+            //     .build();
+            if let Err(e) = sauvegarder_traiter_transaction_serializable(
+                middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_MAJ_NOEUD).await
+            {
+                error!("senseurspassifs.transaction_maj_senseur Erreur sauvegarder_traiter_transaction_serializable pour instance_id {} : {:?}", transaction_cle.instance_id, e);
+            }
         }
     }
 
     {
-        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
-            .exchanges(vec![Securite::L2Prive])
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR, vec![Securite::L2Prive])
             .partition(&user_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
     }
 
     debug!("transaction_maj_senseur Resultat ajout transaction : {:?}", document_transaction);
-    let reponse = match middleware.formatter_reponse(&document_transaction, None) {
-        Ok(reponse) => Ok(Some(reponse)),
-        Err(e) => Err(format!("senseurspassifs.document_transaction Erreur preparation reponse : {:?}", e))
-    }?;
-
-    Ok(reponse)
+    Ok(Some(middleware.build_reponse(&document_transaction)?.0))
+    // let reponse = match middleware.build_reponse(&document_transaction) {
+    //     Ok(reponse) => Ok(Some(reponse)),
+    //     Err(e) => Err(format!("senseurspassifs.document_transaction Erreur preparation reponse : {:?}", e))
+    // }?;
+    //
+    // Ok(reponse)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -157,26 +159,17 @@ pub struct TransactionMajAppareil {
     pub configuration: ConfigurationAppareil,
 }
 
-async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_maj_senseur Consommer transaction : {:?}", &transaction);
-    let user_id = match transaction.get_enveloppe_certificat() {
-        Some(inner) => match inner.get_user_id()? {
-            Some(user) => user.to_owned(),
-            None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur user_id absent du certificat"))?
-        },
-        None => Err(format!("senseurspassifs.transaction_maj_senseur Erreur certificat absent"))?
+    debug!("transaction_maj_senseur Consommer transaction : {:?}", transaction.transaction.id);
+    let user_id = match transaction.certificat.get_user_id()? {
+        Some(user) => user.to_owned(),
+        None => Err(Error::Str("senseurspassifs.transaction_maj_senseur Erreur user_id absent du certificat"))?
     };
 
-    let transaction_convertie: TransactionMajAppareil = match transaction.convertir() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_maj_appareil Transaction lue {:?}", transaction_convertie);
+    let transaction_convertie: TransactionMajAppareil = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
     let document_transaction: DocAppareil = {
         let mut set_ops = doc! {};
@@ -259,8 +252,7 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
 
     // Evenement de mise a jour de l'appareil (web)
     {
-        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
-            .exchanges(vec![Securite::L2Prive])
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL, vec![Securite::L2Prive])
             .partition(&user_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
@@ -270,8 +262,7 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
 
         // Evenement de mise a jour des displays (relais)
         {
-            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_CONFIGURATION_APPAREIL)
-                .exchanges(vec![Securite::L2Prive])
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_CONFIGURATION_APPAREIL, vec![Securite::L2Prive])
                 .partition(&user_id)
                 .build();
             let evenement = json!({
@@ -284,8 +275,7 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
 
         // Evenement de mise a jour des displays (relais)
         if let Some(displays) = &configuration.displays {
-            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_DISPLAYS)
-                .exchanges(vec![Securite::L2Prive])
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_DISPLAYS, vec![Securite::L2Prive])
                 .partition(&user_id)
                 .build();
             let evenement_displays = json!({
@@ -297,8 +287,7 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
 
         // Evenement de mise a jour des programmes (relais)
         if let Some(programmes) = &configuration.programmes {
-            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_PROGRAMMES)
-                .exchanges(vec![Securite::L2Prive])
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_PROGRAMMES, vec![Securite::L2Prive])
                 .partition(&user_id)
                 .build();
             let evenement_programmes = json!({
@@ -310,12 +299,7 @@ async fn transaction_maj_appareil<M, T>(middleware: &M, transaction: T, gestionn
     }
 
     debug!("transaction_maj_appareil Resultat ajout transaction : {:?}", document_transaction);
-    let reponse = match middleware.formatter_reponse(&document_transaction, None) {
-        Ok(reponse) => Ok(Some(reponse)),
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur preparation reponse : {:?}", e))
-    }?;
-
-    Ok(reponse)
+    Ok(Some(middleware.build_reponse(&document_transaction)?.0))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -325,25 +309,17 @@ pub struct TransactionSauvegarderProgramme {
     pub supprimer: Option<bool>,
 }
 
-async fn transaction_sauvegarder_programme<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-                                                 -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_sauvegarder_programme Consommer transaction : {:?}", &transaction);
-    let user_id = match transaction.get_enveloppe_certificat() {
-        Some(inner) => match inner.get_user_id()? {
-            Some(user) => user.to_owned(),
-            None => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur user_id absent du certificat"))?
-        },
-        None => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur certificat absent"))?
+    debug!("transaction_sauvegarder_programme Consommer transaction : {:?}", transaction.transaction.id);
+    let user_id = match transaction.certificat.get_user_id()? {
+        Some(user) => user.to_owned(),
+        None => Err(Error::Str("senseurspassifs.transaction_sauvegarder_programme Erreur user_id absent du certificat"))?
     };
 
-    let transaction_convertie: TransactionSauvegarderProgramme = match transaction.convertir() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_sauvegarder_programme Erreur conversion transaction : {:?}", e))?
-    };
+    let transaction_convertie: TransactionSauvegarderProgramme = serde_json::from_str(transaction.transaction.contenu.as_str())?;
     debug!("transaction_sauvegarder_programmes Transaction lue {:?}", transaction_convertie);
 
     let document_transaction: DocAppareil = {
@@ -398,8 +374,7 @@ async fn transaction_sauvegarder_programme<M, T>(middleware: &M, transaction: T,
 
     // Evenement de mise a jour de l'appareil (web)
     {
-        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
-            .exchanges(vec![Securite::L2Prive])
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL, vec![Securite::L2Prive])
             .partition(&user_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
@@ -409,8 +384,7 @@ async fn transaction_sauvegarder_programme<M, T>(middleware: &M, transaction: T,
 
         // Evenement de mise a jour des programmes (relais)
         if let Some(programmes) = &configuration.programmes {
-            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_PROGRAMMES)
-                .exchanges(vec![Securite::L2Prive])
+            let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, EVENEMENT_MAJ_PROGRAMMES, vec![Securite::L2Prive])
                 .partition(&user_id)
                 .build();
             let evenement_programmes = json!({
@@ -422,12 +396,7 @@ async fn transaction_sauvegarder_programme<M, T>(middleware: &M, transaction: T,
     }
 
     debug!("transaction_sauvegarder_programme Resultat ajout transaction : {:?}", document_transaction);
-    let reponse = match middleware.formatter_reponse(&document_transaction, None) {
-        Ok(reponse) => Ok(Some(reponse)),
-        Err(e) => Err(format!("senseurspassifs.transaction_sauvegarder_programmes Erreur preparation reponse : {:?}", e))
-    }?;
-
-    Ok(reponse)
+    Ok(Some(middleware.build_reponse(&document_transaction)?.0))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -436,23 +405,14 @@ pub struct TransactionInitialiserAppareil {
     pub user_id: String,
 }
 
-async fn transaction_initialiser_appareil<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_initialiser_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_initialiser_appareil Consommer transaction : {:?}", &transaction);
-    let transaction_convertie: TransactionInitialiserAppareil = match transaction.convertir() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_initialiser_appareil Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_initialiser_appareil Transaction lue {:?}", transaction_convertie);
+    debug!("transaction_initialiser_appareil Consommer transaction : {:?}", transaction.transaction.id);
+    let transaction_convertie: TransactionInitialiserAppareil = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
-    let collection = match middleware.get_collection(COLLECTIONS_APPAREILS) {
-        Ok(inner) => inner,
-        Err(e) => Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
-    };
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
     let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil, CHAMP_USER_ID: &transaction_convertie.user_id };
     let ops = doc! {
@@ -470,7 +430,7 @@ async fn transaction_initialiser_appareil<M, T>(middleware: &M, transaction: T, 
         Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
     }
 
-    Ok(middleware.reponse_ok()?)
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -478,25 +438,16 @@ struct TransactionAppareilSupprimer {
     uuid_appareil: String,
 }
 
-async fn transaction_appareil_supprimer<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_appareil_supprimer Consommer transaction : {:?}", &transaction);
-    let contenu_transaction: TransactionAppareilSupprimer = match transaction.clone().convertir() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_appareil_supprimer Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_appareil_supprimer Transaction lue {:?}", contenu_transaction);
+    debug!("transaction_appareil_supprimer Consommer transaction : {:?}", transaction.transaction.id);
+    let contenu_transaction: TransactionAppareilSupprimer = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
-    let user_id = match transaction.get_enveloppe_certificat() {
-        Some(inner) => match inner.get_user_id()? {
-            Some(user) => user.to_owned(),
-            None => Err(format!("senseurspassifs.transaction_appareil_supprimer Erreur user_id absent du certificat"))?
-        },
-        None => Err(format!("senseurspassifs.transaction_appareil_supprimer Erreur certificat absent"))?
+    let user_id = match transaction.certificat.get_user_id()? {
+        Some(user) => user.to_owned(),
+        None => Err(Error::Str("senseurspassifs.transaction_appareil_supprimer Erreur user_id absent du certificat"))?
     };
 
     let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &contenu_transaction.uuid_appareil };
@@ -521,35 +472,25 @@ async fn transaction_appareil_supprimer<M, T>(middleware: &M, transaction: T, ge
     };
 
     {
-        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
-            .exchanges(vec![Securite::L2Prive])
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL, vec![Securite::L2Prive])
             .partition(&user_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &doc_appareil).await?;
     }
 
-    Ok(middleware.reponse_ok()?)
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_appareil_restaurer<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_appareil_restaurer Consommer transaction : {:?}", &transaction);
-    let contenu_transaction: TransactionAppareilSupprimer = match transaction.clone().convertir() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_appareil_restaurer Transaction lue {:?}", contenu_transaction);
+    debug!("transaction_appareil_restaurer Consommer transaction : {:?}", transaction.transaction.id);
+    let contenu_transaction: TransactionAppareilSupprimer = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
-    let user_id = match transaction.get_enveloppe_certificat() {
-        Some(inner) => match inner.get_user_id()? {
-            Some(user) => user.to_owned(),
-            None => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur user_id absent du certificat"))?
-        },
-        None => Err(format!("senseurspassifs.transaction_appareil_restaurer Erreur certificat absent"))?
+    let user_id = match transaction.certificat.get_user_id()? {
+        Some(user) => user.to_owned(),
+        None => Err(Error::Str("senseurspassifs.transaction_appareil_restaurer Erreur user_id absent du certificat"))?
     };
 
     let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &contenu_transaction.uuid_appareil };
@@ -574,28 +515,22 @@ async fn transaction_appareil_restaurer<M, T>(middleware: &M, transaction: T, ge
     };
 
     {
-        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL)
-            .exchanges(vec![Securite::L2Prive])
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL, vec![Securite::L2Prive])
             .partition(&user_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &doc_appareil).await?;
     }
 
-    Ok(middleware.reponse_ok()?)
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
+async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+        M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_maj_noeud Consommer transaction : {:?}", &transaction);
-    let contenu_transaction = match transaction.clone().convertir::<TransactionMajNoeud>() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_maj_noeud Transaction lue {:?}", contenu_transaction);
+    debug!("transaction_maj_noeud Consommer transaction : {:?}", &transaction.transaction.id);
+    let contenu_transaction: TransactionMajNoeud = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
     let document_transaction = {
         let mut valeurs = match convertir_to_bson(contenu_transaction.clone()) {
@@ -637,32 +572,22 @@ async fn transaction_maj_noeud<M, T>(middleware: &M, transaction: T, gestionnair
     };
 
     {
-        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD)
-            .exchanges(vec![Securite::L2Prive])
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_NOEUD, vec![Securite::L2Prive])
             // .partition(&document_transaction.instance_id)
             .build();
         middleware.emettre_evenement(routage_evenement, &document_transaction).await?;
     }
 
     debug!("transaction_maj_noeud Resultat ajout transaction : {:?}", document_transaction);
-    match middleware.formatter_reponse(&document_transaction, None) {
-        Ok(reponse) => Ok(Some(reponse)),
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_noeud Erreur preparation reponse : {:?}", e))
-    }
+    Ok(Some(middleware.build_reponse(&document_transaction)?.0))
 }
 
-async fn transaction_suppression_senseur<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_suppression_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_suppression_senseur Consommer transaction : {:?}", &transaction);
-    let contenu_transaction = match transaction.clone().convertir::<TransactionSupprimerSenseur>() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_suppression_senseur Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_suppression_senseur Transaction lue {:?}", contenu_transaction);
+    debug!("transaction_suppression_senseur Consommer transaction : {:?}", &transaction.transaction.id);
+    let contenu_transaction: TransactionSupprimerSenseur = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
     {
         let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
@@ -674,21 +599,15 @@ async fn transaction_suppression_senseur<M, T>(middleware: &M, transaction: T, g
         debug!("transaction_suppression_senseur Resultat suppression senseur : {:?}", resultat);
     }
 
-    middleware.reponse_ok()
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
-    debug!("transaction_lectures Consommer transaction : {:?}", &transaction);
-    let contenu_transaction = match transaction.clone().convertir::<TransactionLectures>() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_lectures Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_lectures Transaction lue {:?}", contenu_transaction);
+    debug!("transaction_lectures Consommer transaction : {:?}", transaction.transaction.id);
+    let contenu_transaction: TransactionLectures = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
     // Trouver la plus recente lecture
     match contenu_transaction.plus_recente_lecture() {
@@ -711,7 +630,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
                 "$set": {
                     format!("{}.{}", CHAMP_SENSEURS, &contenu_transaction.senseur): senseur,
                     "derniere_lecture": &plus_recente_lecture.timestamp,
-                    "derniere_lecture_dt": &plus_recente_lecture.timestamp.get_datetime(),
+                    "derniere_lecture_dt": &plus_recente_lecture.timestamp,
                 },
                 "$setOnInsert": {
                     CHAMP_CREATION: Utc::now(),
@@ -733,11 +652,15 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
                     debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
                     let transaction = TransactionMajSenseur::new(
                         &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
-                    let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR)
-                        .exchanges(vec![Securite::L4Secure])
-                        // .partition(&gestionnaire.instance_id)
-                        .build();
-                    middleware.soumettre_transaction(routage, &transaction, false).await?;
+                    // let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR, vec![Securite::L4Secure])
+                    //     .blocking(false)
+                    //     .build();
+                    // middleware.soumettre_transaction(routage, &transaction).await?;
+                    if let Err(e) = sauvegarder_traiter_transaction_serializable(
+                        middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR).await
+                    {
+                        error!("Erreur sauvegarder_traiter_transaction_serializable pour nouveau senseur : {:?}", e);
+                    }
                 }
             }
         },
@@ -746,7 +669,7 @@ async fn transaction_lectures<M, T>(middleware: &M, transaction: T, gestionnaire
         }
     }
 
-    middleware.reponse_ok()
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -773,7 +696,8 @@ struct TransactionLectures {
     type_: String,
 
     /// Heure de base des lectures dans la transaction en epoch secs
-    timestamp: DateEpochSeconds,
+    #[serde(with="epochseconds")]
+    timestamp: DateTime<Utc>,
 
     /// Moyenne des lectures
     avg: f64,
@@ -785,10 +709,12 @@ struct TransactionLectures {
     min: f64,
 
     /// Plus vieille date de lecture
-    timestamp_min: DateEpochSeconds,
+    #[serde(with="epochseconds")]
+    timestamp_min: DateTime<Utc>,
 
     /// Plus recente date de lecture
-    timestamp_max: DateEpochSeconds,
+    #[serde(with="epochseconds")]
+    timestamp_max: DateTime<Utc>,
 
     /// Liste des lectures
     lectures: Vec<LectureTransaction>
@@ -796,12 +722,12 @@ struct TransactionLectures {
 
 impl TransactionLectures {
     fn plus_recente_lecture(&self) -> Option<LectureTransaction> {
-        let mut date_lecture: &chrono::DateTime<Utc> = &chrono::MIN_DATETIME;
+        let mut date_lecture: &DateTime<Utc> = &DateTime::<Utc>::MIN_UTC;
         let mut lecture = None;
         for l in &self.lectures {
-            if date_lecture < l.timestamp.get_datetime() {
+            if date_lecture < &l.timestamp {
                 lecture = Some(l);
-                date_lecture = l.timestamp.get_datetime();
+                date_lecture = &l.timestamp;
             }
         }
         match lecture {
@@ -834,18 +760,12 @@ impl TransactionMajSenseur {
     }
 }
 
-async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_senseur_horaire<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_senseur_horaire Consommer transaction : {:?}", &transaction);
-    let transaction_convertie: TransactionLectureHoraire = match transaction.convertir() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_senseur_horaire Erreur conversion transaction : {:?}", e))?
-    };
-    debug!("transaction_senseur_horaire Transaction lue {:?}", transaction_convertie);
+    debug!("transaction_senseur_horaire Consommer transaction : {:?}", transaction.transaction.id);
+    let transaction_convertie: TransactionLectureHoraire = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
     // Inserer dans la table de lectures senseurs horaires
     {
@@ -883,7 +803,7 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
         CHAMP_USER_ID: &transaction_convertie.user_id,
         CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
         "senseur_id": &transaction_convertie.senseur_id,
-        "heure": transaction_convertie.heure.get_datetime(),
+        "heure": &transaction_convertie.heure,
     };
     // let ops = doc! {
     //     "$set": {"derniere_aggregation": heure_max},
@@ -935,7 +855,7 @@ async fn transaction_senseur_horaire<M, T>(middleware: &M, transaction: T, gesti
         }
     }
 
-    middleware.reponse_ok()
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -943,24 +863,16 @@ pub struct TransactionMajConfigurationUsager {
     timezone: Option<String>,
 }
 
-async fn transaction_maj_configuration_usager<M, T>(middleware: &M, transaction: T, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, String>
-    where
-        M: GenerateurMessages + MongoDao,
-        T: Transaction
+async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("transaction_maj_configuration_usager Consommer transaction : {:?}", &transaction);
-    let contenu_transaction: TransactionMajConfigurationUsager = match transaction.clone().convertir() {
-        Ok(t) => t,
-        Err(e) => Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur conversion transaction : {:?}", e))?
-    };
+    debug!("transaction_maj_configuration_usager Consommer transaction : {:?}", transaction.transaction.id);
+    let contenu_transaction: TransactionMajConfigurationUsager = serde_json::from_str(transaction.transaction.contenu.as_str())?;
 
-    let user_id = match transaction.get_enveloppe_certificat() {
-        Some(inner) => match inner.get_user_id()? {
-            Some(user) => user.to_owned(),
-            None => Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur user_id absent du certificat"))?
-        },
-        None => Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur certificat absent"))?
+    let user_id = match transaction.certificat.get_user_id()? {
+        Some(user) => user.to_owned(),
+        None => Err(Error::Str("senseurspassifs.transaction_maj_configuration_usager Erreur user_id absent du certificat"))?
     };
 
     let filtre = doc!{CHAMP_USER_ID: &user_id};
@@ -984,5 +896,5 @@ async fn transaction_maj_configuration_usager<M, T>(middleware: &M, transaction:
         Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur maj configuration : {:?}", e))?
     }
 
-    Ok(middleware.reponse_ok()?)
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }

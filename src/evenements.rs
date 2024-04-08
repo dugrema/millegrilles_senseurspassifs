@@ -1,17 +1,17 @@
-use std::error::Error;
 use log::{debug, warn};
+
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::middleware::EmetteurNotificationsTrait;
 use millegrilles_common_rust::mongo_dao::MongoDao;
-use millegrilles_common_rust::recepteur_messages::MessageValideAction;
-use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::serde::{Serialize, Deserialize};
+use millegrilles_common_rust::error::Error;
 
 use crate::common::*;
 use millegrilles_common_rust::constantes::*;
-use crate::senseurspassifs::GestionnaireSenseursPassifs;
+use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_common_rust::recepteur_messages::MessageValide;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct EvenementPresenceAppareil {
@@ -29,24 +29,22 @@ struct EvenementPresenceAppareilUser {
     connecte: bool,
 }
 
-pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValide) -> Result<(), Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
 {
     debug!("evenement_appareil_presence Recu evenement {:?}", &m.message);
-    let evenement: EvenementPresenceAppareil = m.message.get_msg().map_contenu()?;
+    let evenement: EvenementPresenceAppareil = deser_message_buffer!(m.message);
     debug!("Evenement mappe : {:?}", evenement);
 
-    let certificat = match m.message.certificat.as_ref() {
-        Some(inner) => inner.as_ref(),
-        None => Err(format!("evenement_appareil_presence Erreur chargement certificat (absent)"))?
-    };
+    let certificat = m.certificat.as_ref();
 
-    if ! certificat.verifier_exchanges(vec![Securite::L2Prive]) {
+    if ! certificat.verifier_exchanges(vec![Securite::L2Prive])? {
         warn!("evenement_appareil_presence Evenement presenceAppareil recu sans securite 2.prive, SKIP");
         return Ok(())
     }
-    if ! certificat.verifier_roles_string(vec![ROLE_RELAI_NOM.to_string()]) {
-        warn!("evenement_appareil_presence Evenement presenceAppareil recu sans role {} (roles: {:?}) SKIP", ROLE_RELAI_NOM, certificat.get_roles());
+    if ! certificat.verifier_roles_string(vec![ROLE_RELAI_NOM.to_string()])? {
+        let extensions = certificat.get_extensions()?;
+        warn!("evenement_appareil_presence Evenement presenceAppareil recu sans role {} (extensions: {:?}) SKIP", ROLE_RELAI_NOM, extensions);
         return Ok(())
     }
 
@@ -71,9 +69,8 @@ pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValideAct
             version: evenement.version,
             connecte: !deconnecte
         };
-        let routage = RoutageMessageAction::builder(DOMAINE_NOM, "presenceAppareil")
+        let routage = RoutageMessageAction::builder(DOMAINE_NOM, "presenceAppareil", vec![Securite::L2Prive])
             .partition(&evenement_reemis.user_id)
-            .exchanges(vec![Securite::L2Prive])
             .build();
         middleware.emettre_evenement(routage, &evenement_reemis).await?;
     }

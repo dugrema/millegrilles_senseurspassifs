@@ -1,40 +1,45 @@
-use std::error::Error;
 use log::{debug, info, error};
 use millegrilles_common_rust::bson::{doc, Document};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{calculer_fingerprint, charger_certificat, ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::chrono::Utc;
-use millegrilles_common_rust::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
+use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
-use millegrilles_common_rust::recepteur_messages::{MessageValideAction, TypeMessage};
+use millegrilles_common_rust::recepteur_messages::{MessageValide, TypeMessage};
 use millegrilles_common_rust::serde_json::json;
-use millegrilles_common_rust::verificateur::VerificateurMessage;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
+use millegrilles_common_rust::error::Error;
+use millegrilles_common_rust::get_domaine_action;
+use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 
 use crate::common::*;
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
 use crate::transactions::{TransactionInitialiserAppareil, TransactionMajConfigurationUsager};
 
-pub async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-                                   -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage
+pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+                                   -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
-    debug!("consommer_commande : {:?}", &m.message);
+    debug!("consommer_commande : {:?}", &m.type_message);
 
-    let user_id = m.get_user_id();
+    let user_id = m.certificat.get_user_id()?;
 
     // Autorisation : doit etre un message via exchange
     if user_id.is_none() &&
-        ! m.verifier_exchanges(vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege, Securite::L4Secure)) &&
-        ! m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE) {
-            Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide pour message {:?}", m.correlation_id))?
+        ! m.certificat.verifier_exchanges(vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege, Securite::L4Secure))? &&
+        ! m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)? {
+            Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide pour message {:?}", m.type_message))?
     }
 
-    match m.action.as_str() {
+    let (_, action) = get_domaine_action!(m.type_message);
+
+    match action.as_str() {
         COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
         COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire).await,
         COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire).await,
@@ -52,22 +57,21 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValideAction, gesti
         TRANSACTION_APPAREIL_RESTAURER |
         TRANSACTION_SAUVEGARDER_PROGRAMME => {
             if user_id.is_none() {
-                Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide (user_id requis) pour message {:?}", m.correlation_id))?
+                Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide (user_id requis) pour message {:?}", m.type_message))?
             }
             // Pour l'instant, aucune autre validation. On traite comme une transaction
             Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
         }
-        _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, m.action))?,
+        _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, action))?,
     }
 }
 
-async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("commande_inscrire_appareil Consommer requete : {:?}", & m.message);
-    let mut commande: CommandeInscrireAppareil = m.message.get_msg().map_contenu()?;
-    debug!("commande_inscrire_appareil Commande mappee : {:?}", commande);
+    debug!("commande_inscrire_appareil Consommer requete : {:?}", & m.type_message);
+    let mut commande: CommandeInscrireAppareil = deser_message_buffer!(m.message);
 
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
     let filtre_appareil = doc! {
@@ -139,7 +143,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
             if repondre_certificat {
                 debug!("Repondre avec le certificat");
                 let reponse = json!({"ok": true, "certificat": c});
-                return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+                return Ok(Some(middleware.build_reponse(reponse)?.0));
             }
         },
         None => {
@@ -159,23 +163,24 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValideAction, g
     };
     collection.update_one(filtre_appareil.clone(), ops, None).await?;
 
-    let reponse = json!({"ok": true});
-    return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+    // let reponse = json!({"ok": true});
+    // return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + ValidateurX509 + MongoDao + VerificateurMessage,
+async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + ValidateurX509 + MongoDao
 {
-    debug!("commande_signer_appareil Consommer requete : {:?}", & m.message);
-    let mut commande: CommandeSignerAppareil = m.message.get_msg().map_contenu()?;
-    debug!("commande_signer_appareil Commande mappee : {:?}", commande);
+    debug!("commande_signer_appareil Consommer requete : {:?}", & m.type_message);
+    let mut commande: CommandeSignerAppareil = deser_message_buffer!(m.message);
 
-    let user_id = match m.get_user_id() {
+    let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
         None => {
-            let reponse = json!({"ok": false, "err": "user_id manquant"});
-            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            // let reponse = json!({"ok": false, "err": "user_id manquant"});
+            // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
         }
     };
 
@@ -183,12 +188,10 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
 
     let mut renouvellement = false;
     if let Some(csr) = commande.csr.as_ref() {
-        if let Some(certificat) = m.message.certificat.as_ref() {
-            if let Some(cn) = certificat.subject()?.get("commonName") {
-                if commande.uuid_appareil.as_str() == cn.as_str() {
-                    debug!("Renouvellement d'un certificat d'appareil valide pour {}", cn);
-                    renouvellement = true;
-                }
+        if let Some(cn) = m.certificat.subject()?.get("commonName") {
+            if commande.uuid_appareil.as_str() == cn.as_str() {
+                debug!("Renouvellement d'un certificat d'appareil valide pour {}", cn);
+                renouvellement = true;
             }
         }
     }
@@ -206,8 +209,9 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
                 doc_appareil
             },
             None => {
-                let reponse = json!({"ok": false, "err": "appareil inconnu"});
-                return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                // let reponse = json!({"ok": false, "err": "appareil inconnu"});
+                // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+                return Ok(Some(middleware.reponse_err(None, None, Some("appareil inconnu"))?))
             }
         }
     };
@@ -242,22 +246,20 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValideAction, ges
         "certificat": certificat,
     });
 
-    Ok(Some(middleware.formatter_reponse(reponse, None)?))
+    Ok(Some(middleware.build_reponse(reponse)?.0))
 }
 
-async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + ValidateurX509 + MongoDao + VerificateurMessage,
+async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + ValidateurX509 + MongoDao
 {
-    debug!("commande_maj_configuration_usager Consommer requete : {:?}", & m.message);
-    let mut commande: TransactionMajConfigurationUsager = m.message.get_msg().map_contenu()?;
+    debug!("commande_maj_configuration_usager Consommer requete : {:?}", m.type_message);
+    // Valider format de la commande
+    let _commande: TransactionMajConfigurationUsager = deser_message_buffer!(m.message);
 
-    let user_id = match m.get_user_id() {
-        Some(inner) => inner,
-        None => {
-            let reponse = json!({"ok": false, "err": "user_id manquant"});
-            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
-        }
+    // Verifier qu'on a un certificat usager
+    if m.certificat.get_user_id()?.is_none() {
+        return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
     };
 
     Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
@@ -278,19 +280,19 @@ struct CommandeSignerAppareil {
     csr: Option<String>,
 }
 
-async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug!("commande_challenge_appareil Consommer requete : {:?}", & m.message);
-    let mut commande: CommandeChallengeAppareil = m.message.get_msg().map_contenu()?;
-    debug!("commande_challenge_appareil Commande mappee : {:?}", commande);
+    debug!("commande_challenge_appareil Consommer requete : {:?}", m.type_message);
+    let mut commande: CommandeChallengeAppareil = deser_message_buffer!(m.message);
 
-    let user_id = match m.get_user_id() {
+    let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
         None => {
-            let reponse = json!({"ok": false, "err": "user_id manquant"});
-            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            // let reponse = json!({"ok": false, "err": "user_id manquant"});
+            // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
         }
     };
 
@@ -304,16 +306,18 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
     let doc_appareil: DocAppareil = match doc_appareil_option {
         Some(d) => convertir_bson_deserializable(d)?,
         None => {
-            let reponse = json!({"ok": false, "err": "Appareil inconnu"});
-            return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            // let reponse = json!({"ok": false, "err": "Appareil inconnu"});
+            // return Ok(Some(middleware.formatter_reponse(&reponse, None)?));
+            return Ok(Some(middleware.reponse_err(None, None, Some("Appareil inconnu"))?))
         }
     };
 
     let instance_id = match doc_appareil.instance_id {
         Some(inner) => inner,
         None => {
-            let reponse = json!({"ok": false, "err": "Pas d'instance_id pour cet appareil"});
-            return Ok(Some(middleware.formatter_reponse(reponse, None)?))
+            // let reponse = json!({"ok": false, "err": "Pas d'instance_id pour cet appareil"});
+            // return Ok(Some(middleware.formatter_reponse(reponse, None)?))
+            return Ok(Some(middleware.reponse_err(None, None, Some("Pas d'instance_id pour cet appareil"))?))
         }
     };
 
@@ -325,13 +329,13 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValideAction, 
         "cle_publique": doc_appareil.cle_publique,
         "fingerprint": doc_appareil.fingerprint,
     });
-    let routage = RoutageMessageAction::builder("senseurspassifs_relai", "challengeAppareil")
+    let routage = RoutageMessageAction::builder("senseurspassifs_relai", "challengeAppareil", vec![Securite::L2Prive])
         .partition(instance_id)
-        .exchanges(vec![Securite::L2Prive])
+        .blocking(false)
         .build();
-    middleware.transmettre_commande(routage, &message_challenge, false).await?;
+    middleware.transmettre_commande(routage, &message_challenge).await?;
 
-    return Ok(middleware.reponse_ok()?)
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -343,35 +347,33 @@ struct CommandeChallengeAppareil {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CommandeConfirmerRelai {
     fingerprint: String,
-    expiration: Option<DateEpochSeconds>,
+    #[serde(default, with="optionepochseconds")]
+    expiration: Option<DateTime<Utc>>,
 }
 
 #[derive(Deserialize)]
 pub struct RowRelais {
     pub fingerprint: String,
     pub user_id: String,
-    pub expiration: Option<DateEpochSeconds>,
+    #[serde(default, with="optionepochseconds")]
+    pub expiration: Option<DateTime<Utc>>,
 }
 
-async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug ! ("commande_confirmer_relai Consommer requete : {:?}", & m.message);
-    let mut commande: CommandeConfirmerRelai = m.message.get_msg().map_contenu() ?;
-    debug ! ("commande_confirmer_relai Commande mappee : {:?}", commande);
+    debug ! ("commande_confirmer_relai Consommer requete : {:?}", m.type_message);
+    let mut commande: CommandeConfirmerRelai = deser_message_buffer!(m.message);
 
-    let certificat = match m.message.certificat {
-        Some(inner) => inner,
-        None => Err(format!("commande_confirmer_relai Certificat manquant du message"))?
-    };
+    let certificat = m.certificat.as_ref();
     let common_name = certificat.get_common_name()?;
     let user_id = match certificat.get_user_id()? {
-        Some(inner) => inner.as_str(),
-        None => Err(format!("commande_confirmer_relai Certificat sans user_id"))?
+        Some(inner) => inner,
+        None => Err(Error::Str("commande_confirmer_relai Certificat sans user_id"))?
     };
 
-    let filtre = doc! { "uuid_appareil": &common_name, "user_id": user_id };
+    let filtre = doc! { "uuid_appareil": &common_name, "user_id": &user_id };
     let ops = doc! {
         "$set": { "fingerprint": &commande.fingerprint },
         "$setOnInsert": {
@@ -385,12 +387,12 @@ async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValideAction, ges
     let options = UpdateOptions::builder().upsert(true).build();
     collection.update_one(filtre, ops, options).await?;
 
-    Ok(middleware.reponse_ok()?)
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
 async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Document, doc_appareil: DocAppareil, csr_inclus: Option<&String>)
-    -> Result<Vec<String>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage
+    -> Result<Vec<String>, Error>
+    where M: GenerateurMessages + MongoDao
 {
     let csr = match csr_inclus {
         Some(c) => c.to_owned(),
@@ -403,8 +405,7 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
     };
 
     debug!("signer_certificat Aucun certificat, faire demande de signature");
-    let routage = RoutageMessageAction::builder("CorePki", "signerCsr")
-        .exchanges(vec![Securite::L1Public])
+    let routage = RoutageMessageAction::builder("CorePki", "signerCsr", vec![Securite::L1Public])
         .build();
     let requete = json!({
         "csr": csr,  // &doc_appareil.csr,
@@ -413,28 +414,22 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
     });
 
     debug!("signer_certificat Requete demande signer appareil : {:?}", requete);
-    let reponse: ReponseCertificat = match middleware.transmettre_commande(routage, &requete, true).await? {
+    let reponse: ReponseCertificat = match middleware.transmettre_commande(routage, &requete).await? {
         Some(r) => match r {
-            TypeMessage::Valide(m) => m.message.parsed.map_contenu()?,
-            _ => {
-                Err(format!("senseurspassifs.signer_certificat Reponse certissuer invalide"))?
-            }
+            TypeMessage::Valide(m) => deser_message_buffer!(m.message),
+            _ => Err(Error::Str("senseurspassifs.signer_certificat Reponse certissuer invalide"))?
         },
-        None => {
-            Err(format!("senseurspassifs.signer_certificat Aucune reponse"))?
-        }
+        None => Err(Error::Str("senseurspassifs.signer_certificat Aucune reponse"))?
     };
 
     debug!("signer_certificat Reponse : {:?}", reponse);
     if let Some(true) = reponse.ok {
         let (certificat, fingerprint) = match &reponse.certificat {
             Some(c) => {
-                let cert_x509 = charger_certificat(c[0].as_str());
+                let cert_x509 = charger_certificat(c[0].as_str())?;
                 (c.to_owned(), calculer_fingerprint(&cert_x509)?)
             },
-            None => {
-                Err(format!("senseurspassifs.signer_certificat Reponse serveur incorrect (cert)"))?
-            }
+            None => Err(Error::Str("senseurspassifs.signer_certificat Reponse serveur incorrect (cert)"))?
         };
 
         let ops = doc! {
@@ -451,7 +446,7 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
 
         Ok(certificat)  // Retourner certificat via reponse
     } else {
-        Err(format!("senseurspassifs.signer_certificat Reponse serveur incorrect (ok=false)"))?
+        Err(Error::Str("senseurspassifs.signer_certificat Reponse serveur incorrect (ok=false)"))?
     }
 }
 
@@ -467,24 +462,22 @@ struct ReponseCommandeResetCertificat {
     err: Option<String>,
 }
 
-async fn commande_reset_certificats<M>(middleware: &M, m: MessageValideAction, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao + VerificateurMessage,
+async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
 {
-    debug ! ("commande_reset_certificats Consommer requete : {:?}", & m.message);
+    debug ! ("commande_reset_certificats Consommer requete : {:?}", m.type_message);
 
-    if ! (m.verifier_roles(vec![RolesCertificats::ComptePrive]) || m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)){
-        let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: false, err: Some("Acces refuse".to_string())}, None)?;
-        return Ok(Some(reponse))
+    if ! (m.certificat.verifier_roles(vec![RolesCertificats::ComptePrive])? || m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)?) {
+        // let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: false, err: Some("Acces refuse".to_string())}, None)?;
+        // return Ok(Some(reponse))
+        return Ok(Some(middleware.reponse_err(None, None, Some("Acces refuse"))?))
     }
 
-    let certificat = match m.message.certificat {
-        Some(inner) => inner,
-        None => Err(format!("commande_reset_certificats Certificat manquant du message"))?
-    };
+    let certificat = m.certificat.as_ref();
 
     let user_id = match certificat.get_user_id()? {
-        Some(inner) => inner.as_str(),
+        Some(inner) => inner,
         None => Err("commande_reset_certificats Certificat sans user_id".to_string())?
     };
 
@@ -496,6 +489,7 @@ async fn commande_reset_certificats<M>(middleware: &M, m: MessageValideAction, g
     };
     collection.update_many(filtre, ops, None).await?;
 
-    let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: true, err: None}, None)?;
-    Ok(Some(reponse))
+    // let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: true, err: None}, None)?;
+    // Ok(Some(reponse))
+    Ok(Some(middleware.reponse_ok(None, None)?))
 }
