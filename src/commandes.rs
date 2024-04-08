@@ -404,7 +404,7 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
 
     debug!("signer_certificat Aucun certificat, faire demande de signature");
     let routage = RoutageMessageAction::builder("CorePki", "signerCsr")
-        .exchanges(vec![Securite::L3Protege])
+        .exchanges(vec![Securite::L1Public])
         .build();
     let requete = json!({
         "csr": csr,  // &doc_appareil.csr,
