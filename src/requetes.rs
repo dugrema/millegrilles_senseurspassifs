@@ -14,10 +14,12 @@ use millegrilles_common_rust::serde_json::{json, Value};
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::error::Error;
-use millegrilles_common_rust::get_domaine_action;
+use millegrilles_common_rust::{get_domaine_action, serde_json};
 use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
+use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
 use crate::common::*;
@@ -516,7 +518,11 @@ struct RequeteGetStatistiquesSenseur {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ResultatStatistiquesSenseurRow {
-    heure: usize,
+    #[serde(
+    serialize_with = "epochseconds::serialize",
+    deserialize_with = "chrono_datetime_as_bson_datetime::deserialize"
+    )]
+    heure: ChronoDateTime<Utc>,
     min: Option<f64>,
     max: Option<f64>,
     avg: Option<f64>,
@@ -542,13 +548,10 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, g
     const UTC_STR: &str = "UTC";
     let tz: Tz = match requete.timezone.as_ref() {
         Some(tz) => {
-            match tz.parse() {
-                Ok(tz) => tz,
-                Err(e) => {
-                    info!("requete_get_statistiques_senseur Mauvais timezone, defaulting a UTC : {:?}", e);
-                    UTC_STR.parse().expect("utc")
-                }
-            }
+            tz.parse().unwrap_or_else(|e| {
+                info!("requete_get_statistiques_senseur Mauvais timezone, defaulting a UTC : {:?}", e);
+                UTC_STR.parse().expect("utc")
+            })
         },
         None => UTC_STR.parse().expect("utc")
     };
@@ -754,9 +757,9 @@ async fn query_aggregate<M>(
 {
     debug!("Rapport Custom sur grouping {}", grouping);
 
-    let mut intervalle_heures = doc! {"$gte": min_date.timestamp()};
+    let mut intervalle_heures = doc! {"$gte": min_date};
     if let Some(inner) = max_date {
-        intervalle_heures.insert("$lt", inner.timestamp());
+        intervalle_heures.insert("$lt", inner);
     }
 
     let filtre = doc! {
@@ -772,7 +775,7 @@ async fn query_aggregate<M>(
         _ => Err(format!("Type grouping {} non supporte", grouping))?
     };
 
-    debug!("query_aggregate Requete pipeline {:?}", pipeline);
+    debug!("query_aggregate Requete pipeline\n{}", serde_json::to_string_pretty(&pipeline)?);
 
     let mut reponse = Vec::with_capacity(100);
     let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
@@ -798,7 +801,8 @@ fn pipeline_jour(filtre: Document, tz: &Tz) -> Vec<Document> {
         doc! { "$match": filtre },
         doc! { "$project": {"heure": 1, "avg": 1, "min": 1, "max": 1} },
         doc! { "$group": {
-            "_id": { "$dateToString": { "format": "%Y-%m-%d", "date": {"$toDate": {"$multiply": ["$heure", 1000]}}, "timezone": tz.to_string() } },
+            // "_id": { "$dateToString": { "format": "%Y-%m-%d", "date": {"$toDate": {"$multiply": ["$heure", 1000]}}, "timezone": tz.to_string() } },
+            "_id": { "$dateToString": { "format": "%Y-%m-%d", "date": "$heure", "timezone": tz.to_string() } },
             "heure": {"$min": "$heure"},
             "avg": {"$avg": "$avg"},
             "min": {"$min": "$min"},

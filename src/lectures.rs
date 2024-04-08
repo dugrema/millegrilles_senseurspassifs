@@ -358,9 +358,10 @@ async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) ->
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LecturesCumulees {
     user_id: String,
-    #[serde(default,
-    serialize_with = "epochseconds::serialize",
-    deserialize_with = "chrono_datetime_as_bson_datetime::deserialize")]
+    #[serde(
+        serialize_with = "epochseconds::serialize",
+        deserialize_with = "chrono_datetime_as_bson_datetime::deserialize"
+    )]
     heure: DateTime<Utc>,
     uuid_appareil: String,
     senseur_id: String,
