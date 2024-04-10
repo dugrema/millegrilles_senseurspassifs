@@ -30,7 +30,7 @@ struct EvenementPresenceAppareilUser {
 }
 
 pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValide) -> Result<(), Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("evenement_appareil_presence Recu evenement {:?}", &m.message);
     let evenement: EvenementPresenceAppareil = deser_message_buffer!(m.message);

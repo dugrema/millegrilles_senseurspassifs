@@ -14,7 +14,7 @@ use millegrilles_common_rust::domaines::GestionnaireDomaine;
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::hachages::hacher_uuid;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
-use millegrilles_common_rust::middleware::{EmetteurNotificationsTrait, Middleware, sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
+use millegrilles_common_rust::middleware::{Middleware, sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::mongodb::options::{CountOptions, FindOneAndUpdateOptions, FindOneOptions, FindOptions, Hint, ReturnDocument, UpdateOptions};
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType, TypeMessageOut};
@@ -32,7 +32,7 @@ use crate::commandes::consommer_commande;
 use crate::requetes::consommer_requete;
 use crate::common::*;
 use crate::evenements::evenement_appareil_presence;
-use crate::lectures::{detecter_presence_appareils, evenement_domaine_lecture, generer_transactions_lectures_horaires};
+use crate::lectures::{evenement_domaine_lecture, generer_transactions_lectures_horaires};
 use crate::transactions::{aiguillage_transaction, TransactionInitialiserAppareil, TransactionMajAppareil};
 
 #[derive(Clone, Debug)]
@@ -405,15 +405,17 @@ where M: Middleware + 'static {
 
     // Faire l'aggretation des lectures
     // Va chercher toutes les lectures non traitees de l'heure precedente (-65 minutes)
-    if let Err(e) = generer_transactions_lectures_horaires(middleware, gestionnaire).await {
-        error!("traiter_cedule Erreur generer_transactions : {:?}", e);
-    }
-
-    if minute % 2 == 0 {
-        if let Err(e) = detecter_presence_appareils(middleware).await {
-            error!("traiter_cedule Detecter appareils presents/absents : {:?}", e);
+    if minute % 15 == 5 {
+        if let Err(e) = generer_transactions_lectures_horaires(middleware, gestionnaire).await {
+            error!("traiter_cedule Erreur generer_transactions : {:?}", e);
         }
     }
+
+    // if minute % 2 == 0 {
+    //     if let Err(e) = detecter_presence_appareils(middleware).await {
+    //         error!("traiter_cedule Detecter appareils presents/absents : {:?}", e);
+    //     }
+    // }
 
 
     Ok(())
@@ -421,7 +423,7 @@ where M: Middleware + 'static {
 
 async fn consommer_evenement<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao + EmetteurNotificationsTrait
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("senseurspassifs.consommer_evenement Consommer evenement : {:?}", &m.type_message);
 
