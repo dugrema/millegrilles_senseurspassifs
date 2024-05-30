@@ -797,6 +797,13 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
         }
     }
 
+    // Detecter type de lectures (aucun si vide)
+    let mut type_donnees = None;
+    for l in &transaction_convertie.lectures {
+        type_donnees = Some(l.type_.clone());
+        break
+    }
+
     // Cleanup table lectures
     // let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
     let filtre = doc! {
@@ -835,7 +842,7 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
             CHAMP_USER_ID: &transaction_convertie.user_id,
             CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
         };
-        let ops = doc! {
+        let mut ops = doc! {
             "$setOnInsert": {
                 CHAMP_USER_ID: &transaction_convertie.user_id,
                 CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
@@ -846,9 +853,16 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
                 CHAMP_MODIFICATION: true,
             },
             "$addToSet": {
-                CHAMP_LECTURES_DISPONIBLES: transaction_convertie.senseur_id
+                CHAMP_LECTURES_DISPONIBLES: &transaction_convertie.senseur_id
             }
         };
+
+        if let Some(type_donnees) = type_donnees {
+            ops.insert("$set", doc!{
+                format!("types_donnees.{}", transaction_convertie.senseur_id): type_donnees
+            });
+        }
+
         let options = UpdateOptions::builder().upsert(true).build();
         if let Err(e) = collection.update_one(filtre, ops, options).await {
             Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?

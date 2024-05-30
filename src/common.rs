@@ -188,8 +188,12 @@ pub struct DocAppareil {
     pub persiste: Option<bool>,
 
     /// Liste de senseurs avec des lectures disponibles (historique)
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub lectures_disponibles: Option<Vec<String>>,
+
+    /// Liste de senseurs avec des lectures disponibles (historique)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lectures_disponibles: Option<Vec<String>>,
+    pub types_donnees: Option<HashMap<String, String>>,
 
     /// Flag supprime (agit davantage comme "hide")
     #[serde(skip_serializing_if = "Option::is_none")]
