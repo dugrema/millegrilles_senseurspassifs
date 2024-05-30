@@ -60,7 +60,7 @@ impl GestionnaireDomaine for GestionnaireSenseursPassifs {
     fn get_collections_documents(&self) -> Result<Vec<String>, Error> {
         Ok(vec![
             COLLECTIONS_INSTANCES.to_string(),
-            COLLECTIONS_LECTURES.to_string(),
+            // COLLECTIONS_LECTURES.to_string(),  // Ignorer la table lectures pour regeneration
             COLLECTIONS_APPAREILS.to_string(),
             COLLECTIONS_SENSEURS_HORAIRE.to_string(),
             COLLECTIONS_RELAIS.to_string(),
