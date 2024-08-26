@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use log::{debug, error, info};
 use chrono_tz::Tz;
 
@@ -5,7 +6,7 @@ use millegrilles_common_rust::bson::{doc, Document};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, TimeZone, DateTime as ChronoDateTime, NaiveDateTime};
+use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, TimeZone, DateTime as ChronoDateTime, NaiveDateTime, DateTime};
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions};
@@ -18,8 +19,8 @@ use millegrilles_common_rust::{get_domaine_action, serde_json};
 use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
 use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 
 use crate::senseurspassifs::GestionnaireSenseursPassifs;
 use crate::common::*;
@@ -89,8 +90,72 @@ pub async fn consommer_requete<M>(middleware: &M, message: MessageValide, gestio
         Ok(None)
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct RequeteAppareilsUsager {
+}
+
+#[derive(Serialize)]
+struct ReponseAppareilUsager {
+    pub uuid_appareil: String,
+    pub instance_id: Option<String>,
+    pub csr_present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
+
+    #[serde(default,
+        serialize_with = "optionepochseconds::serialize",
+        deserialize_with = "opt_chrono_datetime_as_bson_datetime::deserialize")]
+    pub derniere_lecture: Option<DateTime<Utc>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<ConfigurationAppareil>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displays: Option<Vec<ParamsDisplay>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
+
+    /// Liste de senseurs avec des lectures disponibles (historique)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub types_donnees: Option<HashMap<String, String>>,
+
+    /// Flag supprime (agit davantage comme "hide")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supprime: Option<bool>,
+
+    /// Flag connecte (websocket)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connecte: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+impl From<DocAppareil> for ReponseAppareilUsager {
+    fn from(value: DocAppareil) -> Self {
+        Self {
+            uuid_appareil: value.uuid_appareil,
+            instance_id: value.instance_id,
+            csr_present: value.csr.is_some(),
+            senseurs: value.senseurs,
+            derniere_lecture: value.derniere_lecture,
+            configuration: value.configuration,
+            displays: value.displays,
+            programmes: value.programmes,
+            types_donnees: value.types_donnees,
+            supprime: value.supprime,
+            connecte: value.connecte,
+            version: value.version,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ReponseAppareilsUsager {
+    ok: bool,
+    appareils: Vec<ReponseAppareilUsager>,
+    instance_id: String,
 }
 
 async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
@@ -123,11 +188,11 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionna
             "configuration": 1,
             "displays": 1,
             "programmes": 1,
-            // "lectures_disponibles": 1,
             "types_donnees": 1,
             "supprime": 1,
             CHAMP_CONNECTE: 1,
             CHAMP_VERSION: 1,
+            "csr": 1,
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
@@ -140,7 +205,12 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionna
 
         while let Some(d) = curseur.next().await {
             match convertir_bson_deserializable::<DocAppareil>(d?) {
-                Ok(a) => appareils.push(a),
+                Ok(a) => {
+                    // appareils.push(a)
+                    // Convertir a type reponse
+                    let app = ReponseAppareilUsager::from(a);
+                    appareils.push(app);
+                },
                 Err(e) => {
                     info!("Erreur mapping DocAppareil user_id {}", user_id);
                     continue
@@ -151,7 +221,8 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionna
         appareils
     };
 
-    let reponse = json!({ "ok": true, "appareils": appareils, "instance_id": &gestionnaire.instance_id });
+    // let reponse = json!({ "ok": true, "appareils": appareils, "instance_id": &gestionnaire.instance_id });
+    let reponse = ReponseAppareilsUsager {ok: true, appareils, instance_id: gestionnaire.instance_id.clone()};
     Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 

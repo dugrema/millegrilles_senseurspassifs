@@ -123,7 +123,12 @@ impl EvenementLecture {
             None => Err(Error::Str("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture user_ud manquant du certificat"))?
         };
         let uuid_appareil = match certificat.subject()?.get("commonName") {
-            Some(inner) => inner.to_owned(),
+            Some(cn) => {
+                match certificat.subject()?.get("organizationalUnitName") {
+                    Some(ou) => format!("{}_{}", cn, ou),
+                    None => cn.to_owned()
+                }
+            },
             None => Err(Error::Str("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat sans uuid_appareil (commonName)"))?
         };
 

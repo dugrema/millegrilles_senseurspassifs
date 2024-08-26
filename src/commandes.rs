@@ -121,8 +121,8 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestion
             if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
                 if &commande.cle_publique != cle_publique_db {
                     // Mismatch CSR et certificat, conserver le csr recu
+                    debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
 
-                    // debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
                     // certificat = None;
                     // let ops = doc! {
                     //     "$set": {
