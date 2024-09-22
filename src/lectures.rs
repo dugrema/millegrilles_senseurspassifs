@@ -88,19 +88,6 @@ impl EvenementLecture {
             None => Err(Error::Str("lectures.EvenementLecture.charger_lecture_directe Field lecture est vide"))?
         };
 
-        // let fingerprint_certificat = lecture.pubkey.clone();
-        // let certificat = match &lecture.certificat {
-        //     Some(c) => {
-        //         middleware.charger_enveloppe(c, Some(fingerprint_certificat.as_str()), None).await?
-        //     },
-        //     None => {
-        //         match middleware.get_certificat(fingerprint_certificat.as_str()).await {
-        //             Some(c) => c,
-        //             None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Certificat inconnu : {}", fingerprint_certificat))?
-        //         }
-        //     }
-        // };
-
         // Recuperer le certificat, valider le message.
         let certificat = {
             let lecture_buffer: MessageMilleGrillesBufferDefault = lecture.clone().try_into()?;
@@ -109,14 +96,6 @@ impl EvenementLecture {
             middleware.valider_certificat_message(&lecture_ref, true).await?
         };
 
-        // Valider le message, extraire enveloppe
-        // let mut message_serialise = MessageSerialise::from_parsed(lecture)?;
-        // message_serialise.certificat = Some(certificat);
-
-        // let validation = middleware.verifier_message(&mut message_serialise, None)?;
-        // if ! validation.valide() { Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture echec validation"))? }
-        // let lecture: LectureAppareil = message_serialise.parsed.map_contenu()?;
-
         let lecture: LectureAppareil = lecture.deserialize()?;
         let user_id = match certificat.get_user_id()? {
             Some(inner) => inner,
@@ -124,29 +103,17 @@ impl EvenementLecture {
         };
         let uuid_appareil = match certificat.subject()?.get("commonName") {
             Some(cn) => {
-                match certificat.subject()?.get("organizationalUnitName") {
-                    Some(ou) => format!("{}_{}", cn, ou),
-                    None => cn.to_owned()
+                // Verifier si c'est un role senseurspassifs - pour tous les autres certificats, on ajout le OU.
+                match certificat.verifier_roles_string(vec!["senseurspassifs".to_string()])? {
+                    true => cn.clone(),
+                    false => match certificat.subject()?.get("organizationalUnitName") {
+                        Some(ou) => format!("{}_{}", cn, ou),
+                        None => cn.to_owned()
+                    }
                 }
             },
             None => Err(Error::Str("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat sans uuid_appareil (commonName)"))?
         };
-
-        // let (user_id, uuid_appareil) = match message_serialise.certificat {
-        //     Some(c) => {
-        //         let user_id = match c.get_user_id()? {
-        //             Some(u) => u.to_owned(),
-        //             None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture user_ud manquant du certificat"))?
-        //         };
-        //         debug!("lectures.EvenementLecture.charger_lecture_directe Certificat lecture subject: {:?}", c.subject());
-        //         let uuid_appareil = match c.subject()?.get("commonName") {
-        //             Some(s) => s.to_owned(),
-        //             None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat sans uuid_appareil (commonName)"))?
-        //         };
-        //         (user_id, uuid_appareil)
-        //     },
-        //     None => Err(format!("lectures.EvenementLecture.charger_lecture_directe Evenement de lecture certificat manquant"))?
-        // };
 
         Ok(LectureAppareilInfo {
             uuid_appareil,
