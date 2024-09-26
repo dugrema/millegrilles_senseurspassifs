@@ -40,11 +40,14 @@ impl GestionnaireDomaineV2 for SenseursPassifsDomainManager {
     fn get_collections_volatiles(&self) -> Result<Vec<String>, CommonError> {
         Ok(vec![
             COLLECTIONS_INSTANCES.to_string(),
-            // COLLECTIONS_LECTURES.to_string(),  // Ignorer la table lectures pour regeneration
             COLLECTIONS_APPAREILS.to_string(),
             COLLECTIONS_SENSEURS_HORAIRE.to_string(),
-            COLLECTIONS_RELAIS.to_string(),
             COLLECTIONS_USAGER.to_string(),
+
+            // Ignorer les collections lectures et relais pour regeneration
+            // Elles ne sont pas conservees dans des transactions (purement volatiles)
+            // COLLECTIONS_LECTURES.to_string(),
+            // COLLECTIONS_RELAIS.to_string(),
         ])
     }
 }
