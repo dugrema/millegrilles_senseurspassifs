@@ -1,7 +1,9 @@
-use log::debug;
+use log::{debug, error};
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::async_trait::async_trait;
+use millegrilles_common_rust::backup::BackupStarter;
 use millegrilles_common_rust::certificats::ValidateurX509;
+use millegrilles_common_rust::chrono::Timelike;
 use millegrilles_common_rust::constantes::{Securite, DEFAULT_Q_TTL};
 use millegrilles_common_rust::db_structs::TransactionValide;
 use millegrilles_common_rust::domaines_traits::{AiguillageTransactions, ConsommateurMessagesBus, GestionnaireBusMillegrilles, GestionnaireDomaineV2};
@@ -19,6 +21,7 @@ use crate::requetes::consommer_requete;
 use crate::common::*;
 use crate::constants::*;
 use crate::evenements::consommer_evenement;
+use crate::lectures::generer_transactions_lectures_horaires;
 use crate::transactions::aiguillage_transaction;
 
 #[derive(Clone)]
@@ -105,7 +108,24 @@ impl AiguillageTransactions for SenseursPassifsDomainManager {
 }
 
 #[async_trait]
-impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {}
+impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
+    async fn traiter_cedule<M>(&self, middleware: &M, trigger: &MessageCedule) -> Result<(), CommonError>
+    where
+        M: MiddlewareMessages + BackupStarter + MongoDao
+    {
+        let minute = trigger.get_date().minute();
+
+        // Faire l'aggretation des lectures
+        // Va chercher toutes les lectures non traitees de l'heure precedente (-65 minutes)
+        if minute % 15 == 5 {
+            if let Err(e) = generer_transactions_lectures_horaires(middleware, self).await {
+                error!("traiter_cedule Erreur generer_transactions : {:?}", e);
+            }
+        }
+
+        Ok(())
+    }
+}
 
 pub fn preparer_queues(manager: &SenseursPassifsDomainManager) -> Vec<QueueType> {
     let mut rk_volatils = Vec::new();
