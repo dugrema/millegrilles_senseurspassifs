@@ -14,7 +14,7 @@ use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::serde_json::Value;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
-use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
+use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable, sauvegarder_traiter_transaction_serializable_v2};
 use millegrilles_common_rust::error::Error;
 use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault, MessageValidable};
@@ -23,8 +23,8 @@ use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epoc
 use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
 use crate::common::*;
-use crate::senseurspassifs::GestionnaireSenseursPassifs;
 use crate::commandes::RowRelais;
+use crate::domain_manager::SenseursPassifsDomainManager;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LectureAppareilInfo {
@@ -167,7 +167,7 @@ impl EvenementLecture {
 }
 
 
-pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<(), Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -339,7 +339,7 @@ struct LecturesCumulees {
     lectures: Vec<LectureSenseur>,
 }
 
-pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs) -> Result<(), Error>
+pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionnaire: &SenseursPassifsDomainManager) -> Result<(), Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     // Donner 5 minutes apres l'heure pour completer traitement des evenements/lectures (65 minutes).
@@ -363,7 +363,7 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionna
     Ok(())
 }
 
-async fn generer_transactions<M>(middleware: &M, gestionnaire: &GestionnaireSenseursPassifs, lectures: LecturesCumulees) -> Result<(), Error>
+async fn generer_transactions<M>(middleware: &M, gestionnaire: &SenseursPassifsDomainManager, lectures: LecturesCumulees) -> Result<(), Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
@@ -460,7 +460,7 @@ async fn generer_transactions<M>(middleware: &M, gestionnaire: &GestionnaireSens
 
         debug!("Soumettre transaction : {:?}", transaction);
         // middleware.soumettre_transaction(routage, &transaction).await?;
-        if let Err(e) = sauvegarder_traiter_transaction_serializable(
+        if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
             middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE).await
         {
             error!("generer_transactions Erreur traitemnet transaction {:?}", e)

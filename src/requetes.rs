@@ -22,11 +22,11 @@ use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
 use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 
-use crate::senseurspassifs::GestionnaireSenseursPassifs;
 use crate::common::*;
+use crate::domain_manager::SenseursPassifsDomainManager;
 
-pub async fn consommer_requete<M>(middleware: &M, message: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
-    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+pub async fn consommer_requete<M>(middleware: &M, message: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+                                  -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("Consommer requete : {:?}", &message.type_message);
@@ -158,7 +158,7 @@ struct ReponseAppareilsUsager {
     instance_id: String,
 }
 
-async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -231,7 +231,7 @@ struct RequeteAppareilsDisplayConfiguration {
     // uuid_appareil: String,  // Extrait du certificat, comme user_id
 }
 
-async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -287,7 +287,7 @@ struct ReponseRequeteAppareilProgrammesConfiguration {
     programmes: Option<DocAppareil>,
 }
 
-async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -341,7 +341,7 @@ async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: Message
     Ok(Some(middleware.build_reponse(&reponse)?.0))
 }
 
-async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -377,7 +377,7 @@ struct RequeteSenseursParUuid {
     uuid_senseurs: Vec<String>,
 }
 
-async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -421,7 +421,7 @@ struct RequeteSenseursPourNoeud {
     instance_id: String,
 }
 
-async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -465,7 +465,7 @@ struct RequeteGetNoeud {
     instance_id: String
 }
 
-async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -524,7 +524,7 @@ struct ReponseGetAppareilsEnAttente {
     appareils: Vec<DocAppareil>,
 }
 
-async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -600,7 +600,7 @@ struct ResultatStatistiquesSenseurRow {
     avg: Option<f64>,
 }
 
-async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -722,7 +722,7 @@ impl From<RowCollectionUsager> for ReponseGetConfigurationUsager {
     }
 }
 
-async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -774,7 +774,7 @@ struct ReponseGetTimezoneAppareil {
     geoposition: Option<GeopositionAppareil>,
 }
 
-async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
                                           -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {

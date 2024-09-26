@@ -9,9 +9,60 @@ use millegrilles_common_rust::serde::{Serialize, Deserialize};
 use millegrilles_common_rust::error::Error;
 
 use crate::common::*;
+
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
 use millegrilles_common_rust::recepteur_messages::MessageValide;
+use millegrilles_common_rust::error::Error as CommonError;
+use millegrilles_common_rust::get_domaine_action;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use crate::domain_manager::SenseursPassifsDomainManager;
+use crate::lectures::evenement_domaine_lecture;
+
+pub async fn consommer_evenement<M>(middleware: &M, gestionnaire: &SenseursPassifsDomainManager, m: MessageValide)
+                                    -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
+where M: ValidateurX509 + GenerateurMessages + MongoDao
+{
+    debug!("senseurspassifs.consommer_evenement Consommer evenement : {:?}", &m.type_message);
+
+    // Autorisation : doit etre de niveau 2.prive, 3.protege ou 4.secure
+    match m.certificat.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])? {
+        true => Ok(()),
+        false => Err(Error::Str("senseurspassifs.consommer_evenement: Evenement invalide (pas 2.prive, 3.protege ou 4.secure)")),
+    }?;
+
+    let (_, action) = get_domaine_action!(m.type_message);
+
+    match action.as_str() {
+        EVENEMENT_LECTURE => { evenement_domaine_lecture(middleware, &m, gestionnaire).await?; Ok(None) },
+        EVENEMENT_PRESENCE_APPAREIL => { evenement_appareil_presence(middleware, &m).await?; Ok(None) },
+        EVENEMENT_CEDULE => Ok(None),  // Obsolete, utiliser evenement ping
+        _ => Err(format!("senseurspassifs.consommer_evenement: Mauvais type d'action pour une transaction : {}", action))?,
+    }
+
+    // debug!("consommer_evenement Consommer evenement : {:?}", &m.type_message);
+    //
+    // // Autorisation : doit etre de niveau 3.protege ou 4.secure
+    // match m.certificat.verifier_exchanges(vec![Securite::L2Prive])? {
+    //     true => Ok(()),
+    //     false => Err(format!("events.consommer_evenement: Exchange evenement invalide (pas 2.prive)")),
+    // }?;
+    //
+    // let action = {
+    //     match &m.type_message {
+    //         TypeMessageOut::Evenement(r) => r.action.clone(),
+    //         _ => Err(CommonError::Str("events.consommer_evenement Mauvais type de message (pas evenement)"))?
+    //     }
+    // };
+    //
+    // match action.as_str() {
+    //     // EVENEMENT_TRANSCODAGE_PROGRES => evenement_transcodage_progres(middleware, m).await,
+    //     EVENEMENT_CEDULE => Ok(None),  // Obsolete, utiliser evenement ping
+    //     _ => Err(format!("events.consommer_evenement: Mauvais type d'action pour un evenement : {}", action))?,
+    // }
+}
+
 
 #[derive(Debug, Serialize, Deserialize)]
 struct EvenementPresenceAppareil {

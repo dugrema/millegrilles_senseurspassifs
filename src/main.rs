@@ -1,15 +1,19 @@
-mod domaines_senseurspassifs;
-mod senseurspassifs;
+// mod domaines_senseurspassifs;
+// mod senseurspassifs;
 mod requetes;
 mod common;
 mod lectures;
 mod transactions;
 mod commandes;
 mod evenements;
+mod builder;
+mod domain_manager;
+mod constants;
 
 use log::{info};
 use millegrilles_common_rust::tokio as tokio;
-use crate::domaines_senseurspassifs::run;
+// use crate::domaines_senseurspassifs::run;
+use crate::builder::run;
 
 fn main() {
     env_logger::init();

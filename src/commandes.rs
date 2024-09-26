@@ -5,7 +5,7 @@ use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{calculer_fingerprint, charger_certificat, ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable};
+use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable, sauvegarder_traiter_transaction_serializable_v2, sauvegarder_traiter_transaction_v2};
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
 use millegrilles_common_rust::recepteur_messages::{MessageValide, TypeMessage};
@@ -19,10 +19,10 @@ use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 
 use crate::common::*;
-use crate::senseurspassifs::GestionnaireSenseursPassifs;
+use crate::domain_manager::SenseursPassifsDomainManager;
 use crate::transactions::{TransactionInitialiserAppareil, TransactionMajConfigurationUsager};
 
-pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
                                    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -51,7 +51,7 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
         TRANSACTION_SUPPRESSION_SENSEUR |
         TRANSACTION_MAJ_APPAREIL => {
             // Pour l'instant, aucune autre validation. On traite comme une transaction
-            Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
+            Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire).await?)
         }
         TRANSACTION_APPAREIL_SUPPRIMER |
         TRANSACTION_APPAREIL_RESTAURER |
@@ -60,13 +60,13 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
                 Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide (user_id requis) pour message {:?}", m.type_message))?
             }
             // Pour l'instant, aucune autre validation. On traite comme une transaction
-            Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
+            Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire).await?)
         }
         _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, action))?,
     }
 }
 
-async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -168,7 +168,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestion
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + ValidateurX509 + MongoDao
 {
@@ -235,7 +235,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
             uuid_appareil: doc_appareil.uuid_appareil.to_owned(),
             user_id,
         };
-        sauvegarder_traiter_transaction_serializable(
+        sauvegarder_traiter_transaction_serializable_v2(
             middleware, &transaction, gestionnaire,
             DOMAINE_NOM, TRANSACTION_INIT_APPAREIL).await?;
     }
@@ -249,7 +249,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
     Ok(Some(middleware.build_reponse(reponse)?.0))
 }
 
-async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + ValidateurX509 + MongoDao
 {
@@ -262,7 +262,7 @@ async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, 
         return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
     };
 
-    Ok(sauvegarder_traiter_transaction(middleware, m, gestionnaire).await?)
+    Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire).await?)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -280,7 +280,7 @@ struct CommandeSignerAppareil {
     csr: Option<String>,
 }
 
-async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -359,7 +359,7 @@ pub struct RowRelais {
     pub expiration: Option<DateTime<Utc>>,
 }
 
-async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -462,7 +462,7 @@ struct ReponseCommandeResetCertificat {
     err: Option<String>,
 }
 
-async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {

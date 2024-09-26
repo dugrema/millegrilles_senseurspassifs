@@ -15,13 +15,13 @@ use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, Return
 use millegrilles_common_rust::serde_json::json;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::error::Error;
-use millegrilles_common_rust::middleware::sauvegarder_traiter_transaction_serializable;
+use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction_serializable, sauvegarder_traiter_transaction_serializable_v2};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 
 use crate::common::*;
-use crate::senseurspassifs::GestionnaireSenseursPassifs;
+use crate::domain_manager::SenseursPassifsDomainManager;
 
-pub async fn aiguillage_transaction<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+pub async fn aiguillage_transaction<M>(gestionnaire: &SenseursPassifsDomainManager, middleware: &M, transaction: TransactionValide)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -51,7 +51,7 @@ pub async fn aiguillage_transaction<M>(middleware: &M, transaction: TransactionV
     }
 }
 
-async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -128,7 +128,7 @@ async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionVali
             //     // .partition(&gestionnaire.instance_id)
             //     .blocking(false)
             //     .build();
-            if let Err(e) = sauvegarder_traiter_transaction_serializable(
+            if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
                 middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_MAJ_NOEUD).await
             {
                 error!("senseurspassifs.transaction_maj_senseur Erreur sauvegarder_traiter_transaction_serializable pour instance_id {} : {:?}", transaction_cle.instance_id, e);
@@ -159,7 +159,7 @@ pub struct TransactionMajAppareil {
     pub configuration: ConfigurationAppareil,
 }
 
-async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -309,7 +309,7 @@ pub struct TransactionSauvegarderProgramme {
     pub supprimer: Option<bool>,
 }
 
-async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -405,7 +405,7 @@ pub struct TransactionInitialiserAppareil {
     pub user_id: String,
 }
 
-async fn transaction_initialiser_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_initialiser_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -438,7 +438,7 @@ struct TransactionAppareilSupprimer {
     uuid_appareil: String,
 }
 
-async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -481,7 +481,7 @@ async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: Transact
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -524,7 +524,7 @@ async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: Transact
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where
         M: GenerateurMessages + MongoDao
@@ -582,7 +582,7 @@ async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide
     Ok(Some(middleware.build_reponse(&document_transaction)?.0))
 }
 
-async fn transaction_suppression_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_suppression_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -602,7 +602,7 @@ async fn transaction_suppression_senseur<M>(middleware: &M, transaction: Transac
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -656,7 +656,7 @@ async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide,
                     //     .blocking(false)
                     //     .build();
                     // middleware.soumettre_transaction(routage, &transaction).await?;
-                    if let Err(e) = sauvegarder_traiter_transaction_serializable(
+                    if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
                         middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR).await
                     {
                         error!("Erreur sauvegarder_traiter_transaction_serializable pour nouveau senseur : {:?}", e);
@@ -760,7 +760,7 @@ impl TransactionMajSenseur {
     }
 }
 
-async fn transaction_senseur_horaire<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_senseur_horaire<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -877,7 +877,7 @@ pub struct TransactionMajConfigurationUsager {
     timezone: Option<String>,
 }
 
-async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &GestionnaireSenseursPassifs)
+async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
