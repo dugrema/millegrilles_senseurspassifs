@@ -2513,8 +2513,8 @@ checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
 
 [[package]]
 name = "millegrilles_common_rust"
-version = "2024.7.2"
-source = "git+https://github.com/dugrema/millegrilles_common_rust.git?branch=master#2bb2c09d7750752ef45bf916ea4af11f7ee0b304"
+version = "2024.7.3"
+source = "git+https://github.com/dugrema/millegrilles_common_rust.git?branch=master#70cb295885998f1a6aa7bc38f427fb202d95d3bc"
 dependencies = [
  "async-compression",
  "async-recursion",
@@ -2594,7 +2594,7 @@ dependencies = [
 
 [[package]]
 name = "millegrilles_senseurspassifs"
-version = "2024.7.1"
+version = "2024.7.2"
 dependencies = [
  "chrono-tz",
  "env_logger",
