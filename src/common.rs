@@ -129,7 +129,7 @@ pub struct LectureTransaction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InformationAppareil {
     pub uuid_appareil: String,
-    pub instance_id: String,
+    pub instance_id: Option<String>,
     pub user_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptif: Option<String>,
