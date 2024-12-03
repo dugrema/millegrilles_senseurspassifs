@@ -20,6 +20,7 @@ use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epo
 
 use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
+use crate::evenements::EvenementPresenceAppareilUser;
 use crate::transactions::{TransactionInitialiserAppareil, TransactionMajConfigurationUsager};
 
 pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
@@ -45,6 +46,7 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
         COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire).await,
         COMMANDE_CONFIRMER_RELAI => commande_confirmer_relai(middleware, m, gestionnaire).await,
         COMMANDE_RESET_CERTIFICATS => commande_reset_certificats(middleware, m, gestionnaire).await,
+        COMMAND_DISCONNECT_RELAY => command_disconnect_relay(middleware, m).await,
         TRANSACTION_MAJ_CONFIGURATION_USAGER => commande_maj_configuration_usager(middleware, m, gestionnaire).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
@@ -466,8 +468,6 @@ async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, gestion
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
-    debug ! ("commande_reset_certificats Consommer requete : {:?}", m.type_message);
-
     if ! (m.certificat.verifier_roles(vec![RolesCertificats::ComptePrive])? || m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)?) {
         // let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: false, err: Some("Acces refuse".to_string())}, None)?;
         // return Ok(Some(reponse))
@@ -491,5 +491,52 @@ async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, gestion
 
     // let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: true, err: None}, None)?;
     // Ok(Some(reponse))
+    Ok(Some(middleware.reponse_ok(None, None)?))
+}
+
+pub async fn command_disconnect_relay<M>(middleware: &M, m: MessageValide)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + MongoDao
+{
+    if !(m.certificat.verifier_roles_string(vec!["senseurspassifs_relai".to_string()])?) {
+        return Ok(Some(middleware.reponse_err(Some(403), None, Some("Acces refuse"))?))
+    }
+    if !(m.certificat.verifier_exchanges(vec![Securite::L2Prive])?) {
+        return Ok(Some(middleware.reponse_err(Some(403), None, Some("Acces refuse"))?))
+    }
+
+    let instance_id = m.certificat.get_common_name()?;
+
+    let collection = middleware.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let filtre = doc!{ "instance_id": &instance_id, "connecte": true };
+    let mut cursor = collection.find(filtre, None).await?;
+    while cursor.advance().await? {
+        let device = cursor.deserialize_current()?;
+
+        // Emit event for device
+        {
+            if let Some(user_id) = device.user_id {
+                let evenement_reemis = EvenementPresenceAppareilUser {
+                    uuid_appareil: device.uuid_appareil,
+                    user_id,
+                    version: device.version,
+                    connecte: false
+                };
+                let routage = RoutageMessageAction::builder(DOMAINE_NOM, "presenceAppareil", vec![Securite::L2Prive])
+                    .partition(&evenement_reemis.user_id)
+                    .build();
+                middleware.emettre_evenement(routage, &evenement_reemis).await?;
+            }
+        }
+    }
+
+    let ops = doc! {
+        "$unset": {"instance_id": true},
+        "$set": {"connecte": false},
+        "$currentDate": {CHAMP_MODIFICATION: true},
+    };
+    let filtre = doc!{ "instance_id": instance_id, "connecte": true };
+    collection.update_many(filtre, ops, None).await?;
+
     Ok(Some(middleware.reponse_ok(None, None)?))
 }

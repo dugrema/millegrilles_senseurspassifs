@@ -32,6 +32,7 @@ pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
 pub const COMMANDE_SIGNER_APPAREIL: &str = "signerAppareil";
 pub const COMMANDE_CONFIRMER_RELAI: &str = "confirmerRelai";
 pub const COMMANDE_RESET_CERTIFICATS: &str = "resetCertificatsAppareils";
+pub const COMMAND_DISCONNECT_RELAY: &str = "disconnectRelay";
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -162,6 +163,7 @@ impl<'a> InformationAppareil{
 pub struct DocAppareil {
     pub uuid_appareil: String,
     pub instance_id: Option<String>,
+    pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cle_publique: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

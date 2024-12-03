@@ -177,6 +177,7 @@ pub fn preparer_queues(manager: &SenseursPassifsDomainManager) -> Vec<QueueType>
         COMMANDE_SIGNER_APPAREIL,
         COMMANDE_CONFIRMER_RELAI,
         COMMANDE_RESET_CERTIFICATS,
+        COMMAND_DISCONNECT_RELAY,
     ];
     for cmd in commandes_transactions {
         rk_volatils.push(ConfigRoutingExchange {routing_key: format!("commande.{}.{}", DOMAINE_NOM, cmd), exchange: Securite::L2Prive});

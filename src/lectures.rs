@@ -171,7 +171,6 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, ges
     -> Result<(), Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
-    debug!("evenement_domaine_lecture Recu evenement {:?}", &m.message);
     let lecture: EvenementLecture = deser_message_buffer!(m.message);
 
     let certificat = m.certificat.as_ref();

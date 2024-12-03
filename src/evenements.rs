@@ -73,11 +73,11 @@ struct EvenementPresenceAppareil {
 }
 
 #[derive(Debug, Serialize)]
-struct EvenementPresenceAppareilUser {
-    uuid_appareil: String,
-    user_id: String,
-    version: Option<String>,
-    connecte: bool,
+pub struct EvenementPresenceAppareilUser {
+    pub uuid_appareil: String,
+    pub user_id: String,
+    pub version: Option<String>,
+    pub connecte: bool,
 }
 
 pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValide) -> Result<(), Error>
