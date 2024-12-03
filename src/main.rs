@@ -9,6 +9,7 @@ mod evenements;
 mod builder;
 mod domain_manager;
 mod constants;
+mod maintenance;
 
 use log::{info};
 use millegrilles_common_rust::tokio as tokio;

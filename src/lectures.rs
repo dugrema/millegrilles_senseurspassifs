@@ -195,6 +195,7 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, ges
 
     let mut set_ops = doc! {
         CHAMP_INSTANCE_ID: &instance_id,
+        "connecte": true,
         "derniere_lecture": &derniere_lecture,
         "derniere_lecture_dt": derniere_lecture_dt,
     };

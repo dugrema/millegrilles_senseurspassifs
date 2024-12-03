@@ -22,6 +22,7 @@ use crate::common::*;
 use crate::constants::*;
 use crate::evenements::consommer_evenement;
 use crate::lectures::generer_transactions_lectures_horaires;
+use crate::maintenance::mark_devices_offline;
 use crate::transactions::aiguillage_transaction;
 
 #[derive(Clone)]
@@ -120,6 +121,12 @@ impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
         if minute % 15 == 5 {
             if let Err(e) = generer_transactions_lectures_horaires(middleware, self).await {
                 error!("traiter_cedule Erreur generer_transactions : {:?}", e);
+            }
+        }
+
+        if minute % 5 == 3 {
+            if let Err(e) = mark_devices_offline(middleware).await {
+                error!("traiter_cedule Error mark_devices_offline : {:?}", e);
             }
         }
 
