@@ -4,6 +4,7 @@ use log::{debug, error, warn};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::{chrono, serde_json};
+use millegrilles_common_rust::base64::engine::DecodePaddingMode::RequireNone;
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao};
@@ -39,18 +40,18 @@ pub async fn aiguillage_transaction<M>(
 
     match action.as_str() {
         TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire, session).await,
-        TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
-        TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
-        TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire).await,
+        TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction,  session).await,
+        TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, session).await,
+        TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire, session).await,
         TRANSACTION_SENSEUR_HORAIRE => transaction_senseur_horaire(middleware, transaction, session).await,
-        TRANSACTION_INIT_APPAREIL => transaction_initialiser_appareil(middleware, transaction, gestionnaire).await,
-        TRANSACTION_APPAREIL_SUPPRIMER => transaction_appareil_supprimer(middleware, transaction, gestionnaire).await,
-        TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, gestionnaire).await,
-        TRANSACTION_MAJ_CONFIGURATION_USAGER => transaction_maj_configuration_usager(middleware, transaction, gestionnaire).await,
-        TRANSACTION_SAUVEGARDER_PROGRAMME => transaction_sauvegarder_programme(middleware, transaction, gestionnaire).await,
+        TRANSACTION_INIT_APPAREIL => transaction_initialiser_appareil(middleware, transaction, session).await,
+        TRANSACTION_APPAREIL_SUPPRIMER => transaction_appareil_supprimer(middleware, transaction, session).await,
+        TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, session).await,
+        TRANSACTION_MAJ_CONFIGURATION_USAGER => transaction_maj_configuration_usager(middleware, transaction, session).await,
+        TRANSACTION_SAUVEGARDER_PROGRAMME => transaction_sauvegarder_programme(middleware, transaction, gestionnaire, session).await,
 
         // Legacy
-        TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
+        TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, session).await,
 
         _ => Err(Error::String(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.transaction.id, action))),
     }
@@ -159,7 +160,7 @@ pub struct TransactionMajAppareil {
     pub configuration: ConfigurationAppareil,
 }
 
-async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -237,7 +238,7 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
             .build();
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
             Ok(r) => match r {
                 Some(r) => match convertir_bson_deserializable(r) {
                     Ok(r) => r,
@@ -309,7 +310,7 @@ pub struct TransactionSauvegarderProgramme {
     pub supprimer: Option<bool>,
 }
 
-async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -359,7 +360,7 @@ async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: Trans
             .build();
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
             Ok(r) => match r {
                 Some(r) => match convertir_bson_deserializable(r) {
                     Ok(r) => r,
@@ -405,7 +406,7 @@ pub struct TransactionInitialiserAppareil {
     pub user_id: String,
 }
 
-async fn transaction_initialiser_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_initialiser_appareil<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -426,7 +427,7 @@ async fn transaction_initialiser_appareil<M>(middleware: &M, transaction: Transa
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
     let options = UpdateOptions::builder().upsert(true).build();
-    if let Err(e) = collection.update_one(filtre, ops, options).await {
+    if let Err(e) = collection.update_one_with_session(filtre, ops, options, session).await {
         Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
     }
 
@@ -438,7 +439,7 @@ struct TransactionAppareilSupprimer {
     uuid_appareil: String,
 }
 
-async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -457,7 +458,7 @@ async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: Transact
         "$currentDate": { CHAMP_MODIFICATION: true }
     };
     let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
-    let doc_appareil = match collection.find_one_and_update(filtre, ops, options).await {
+    let doc_appareil = match collection.find_one_and_update_with_session(filtre, ops, options, session).await {
         Ok(inner) => match inner {
             Some(inner) => {
                 let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {
@@ -481,7 +482,7 @@ async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: Transact
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -500,7 +501,7 @@ async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: Transact
         "$currentDate": { CHAMP_MODIFICATION: true }
     };
     let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
-    let doc_appareil = match collection.find_one_and_update(filtre, ops, options).await {
+    let doc_appareil = match collection.find_one_and_update_with_session(filtre, ops, options, session).await {
         Ok(inner) => match inner {
             Some(inner) => {
                 let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {
@@ -524,7 +525,7 @@ async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: Transact
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where
         M: GenerateurMessages + MongoDao
@@ -554,7 +555,7 @@ async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide
         let filtre = doc! { CHAMP_INSTANCE_ID: &contenu_transaction.instance_id };
         let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
         let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
-        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
             Ok(r) => {
                 match r {
                     Some(r) => {
@@ -582,7 +583,7 @@ async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide
     Ok(Some(middleware.build_reponse(&document_transaction)?.0))
 }
 
-async fn transaction_suppression_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_suppression_senseur<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -592,7 +593,7 @@ async fn transaction_suppression_senseur<M>(middleware: &M, transaction: Transac
     {
         let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
         let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-        let resultat = match collection.delete_one(filtre, None).await {
+        let resultat = match collection.delete_one_with_session(filtre, None, session).await {
             Ok(r) => r,
             Err(e) => Err(format!("senseurspassifs.transaction_suppression_senseur Erreur traitement transaction senseur : {:?}", e))?
         };
@@ -602,7 +603,7 @@ async fn transaction_suppression_senseur<M>(middleware: &M, transaction: Transac
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -641,7 +642,7 @@ async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide,
                 "$currentDate": { CHAMP_MODIFICATION: true },
             };
             let opts = UpdateOptions::builder().upsert(true).build();
-            let resultat = match collection.update_one(filtre, ops, Some(opts)).await {
+            let resultat = match collection.update_one_with_session(filtre, ops, Some(opts), session).await {
                 Ok(r) => r,
                 Err(e) => Err(format!("senseurspassifs.transaction_lectures Erreur traitement transaction senseur : {:?}", e))?
             };
@@ -770,6 +771,8 @@ struct SenseurHoraireRow {
     senseur_id: String,
     #[serde(with="chrono_datetime_as_bson_datetime")]
     heure: DateTime<Utc>,
+    #[serde(rename="type")]
+    type_: Option<String>,
     min: Option<f64>,
     max: Option<f64>,
     avg: Option<f64>,
@@ -777,12 +780,19 @@ struct SenseurHoraireRow {
 
 impl From<&TransactionLectureHoraire> for SenseurHoraireRow {
     fn from(value: &TransactionLectureHoraire) -> Self {
+
+        let type_ = match value.lectures.get(value.lectures.len()-1) {
+            Some(lecture) => Some(lecture.type_.clone()),
+            None => None
+        };
+
         Self {
             creation: Utc::now(),
             user_id: value.user_id.clone(),
             uuid_appareil: value.uuid_appareil.clone(),
             senseur_id: value.senseur_id.clone(),
             heure: value.heure,
+            type_,
             min: value.min,
             max: value.max,
             avg: value.avg,
@@ -865,7 +875,7 @@ pub struct TransactionMajConfigurationUsager {
     timezone: Option<String>,
 }
 
-async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -894,7 +904,7 @@ async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: Tr
         "$currentDate": {CHAMP_MODIFICATION: true}
     };
     let options = UpdateOptions::builder().upsert(true).build();
-    if let Err(e) = collection.update_one(filtre, ops, options).await {
+    if let Err(e) = collection.update_one_with_session(filtre, ops, options, session).await {
         Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur maj configuration : {:?}", e))?
     }
 

@@ -44,12 +44,12 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
     session.start_transaction(None).await?;
 
     let result = match action.as_str() {
-        COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
-        COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire).await,
+        COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire, &mut session).await,
+        COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire, &mut session).await,
         COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire, &mut session).await,
-        COMMANDE_CONFIRMER_RELAI => commande_confirmer_relai(middleware, m, gestionnaire).await,
-        COMMANDE_RESET_CERTIFICATS => commande_reset_certificats(middleware, m, gestionnaire).await,
-        COMMAND_DISCONNECT_RELAY => command_disconnect_relay(middleware, m).await,
+        COMMANDE_CONFIRMER_RELAI => commande_confirmer_relai(middleware, m,  &mut session).await,
+        COMMANDE_RESET_CERTIFICATS => commande_reset_certificats(middleware, m, &mut session).await,
+        COMMAND_DISCONNECT_RELAY => command_disconnect_relay(middleware, m, &mut session).await,
         TRANSACTION_MAJ_CONFIGURATION_USAGER => commande_maj_configuration_usager(middleware, m, gestionnaire, &mut session).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
@@ -82,7 +82,7 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
     }
 }
 
-async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -116,7 +116,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestion
             "$setOnInsert": set_on_insert,
             "$set": set,
         };
-        collection.find_one_and_update(filtre_appareil.clone(), ops, Some(options)).await?
+        collection.find_one_and_update_with_session(filtre_appareil.clone(), ops, Some(options), session).await?
     };
 
     let doc_appareil: DocAppareil = match doc_appareil_option {
@@ -177,7 +177,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestion
         "$unset": {"certificat": true, "fingerprint": true},
         "$currentDate": {CHAMP_MODIFICATION: true},
     };
-    collection.update_one(filtre_appareil.clone(), ops, None).await?;
+    collection.update_one_with_session(filtre_appareil.clone(), ops, None, session).await?;
 
     // let reponse = json!({"ok": true});
     // return Ok(Some(middleware.formatter_reponse(reponse, None)?));
@@ -218,7 +218,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
     };
 
     let mut doc_appareil = {
-        let d = collection.find_one(filtre_appareil.clone(), None).await?;
+        let d = collection.find_one_with_session(filtre_appareil.clone(), None, session).await?;
         match d {
             Some(d) => {
                 let doc_appareil: DocAppareil = convertir_bson_deserializable(d)?;
@@ -233,11 +233,11 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
     };
 
     let certificat = match renouvellement {
-        true => signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil.clone(), commande.csr.as_ref()).await?,
+        true => signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil.clone(), commande.csr.as_ref(), session).await?,
         false => match doc_appareil.certificat {
             Some(c) => c,
             None => {
-                signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil.clone(), None).await?
+                signer_certificat(middleware, user_id.as_str(), filtre_appareil, doc_appareil.clone(), None, session).await?
             }
         }
     };
@@ -296,7 +296,7 @@ struct CommandeSignerAppareil {
     csr: Option<String>,
 }
 
-async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -316,7 +316,7 @@ async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, gestio
 
     let doc_appareil_option = {
         let filtre = doc! {"uuid_appareil": &commande.uuid_appareil, "user_id": user_id};
-        collection.find_one(filtre, None).await?
+        collection.find_one_with_session(filtre, None, session).await?
     };
 
     let doc_appareil: DocAppareil = match doc_appareil_option {
@@ -375,7 +375,7 @@ pub struct RowRelais {
     pub expiration: Option<DateTime<Utc>>,
 }
 
-async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -401,12 +401,12 @@ async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, gestionna
     };
     let collection = middleware.get_collection(COLLECTIONS_RELAIS)?;
     let options = UpdateOptions::builder().upsert(true).build();
-    collection.update_one(filtre, ops, options).await?;
+    collection.update_one_with_session(filtre, ops, options, session).await?;
 
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Document, doc_appareil: DocAppareil, csr_inclus: Option<&String>)
+async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Document, doc_appareil: DocAppareil, csr_inclus: Option<&String>, session: &mut ClientSession)
     -> Result<Vec<String>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -458,7 +458,7 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-        collection.update_one(filtre_appareil, ops, None).await?;
+        collection.update_one_with_session(filtre_appareil, ops, None, session).await?;
 
         Ok(certificat)  // Retourner certificat via reponse
     } else {
@@ -478,7 +478,7 @@ struct ReponseCommandeResetCertificat {
     err: Option<String>,
 }
 
-async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -501,14 +501,14 @@ async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, gestion
         "$unset": {TRANSACTION_CHAMP_CERTIFICAT: true, PKI_DOCUMENT_CHAMP_FINGERPRINT: true},
         "$currentDate": {CHAMP_MODIFICATION: true}
     };
-    collection.update_many(filtre, ops, None).await?;
+    collection.update_many_with_session(filtre, ops, None, session).await?;
 
     // let reponse = middleware.formatter_reponse(ReponseCommandeResetCertificat{ok: true, err: None}, None)?;
     // Ok(Some(reponse))
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-pub async fn command_disconnect_relay<M>(middleware: &M, m: MessageValide)
+pub async fn command_disconnect_relay<M>(middleware: &M, m: MessageValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -523,8 +523,8 @@ pub async fn command_disconnect_relay<M>(middleware: &M, m: MessageValide)
 
     let collection = middleware.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
     let filtre = doc!{ "instance_id": &instance_id, "connecte": true };
-    let mut cursor = collection.find(filtre, None).await?;
-    while cursor.advance().await? {
+    let mut cursor = collection.find_with_session(filtre, None, session).await?;
+    while cursor.advance(session).await? {
         let device = cursor.deserialize_current()?;
 
         // Emit event for device
@@ -550,7 +550,7 @@ pub async fn command_disconnect_relay<M>(middleware: &M, m: MessageValide)
         "$currentDate": {CHAMP_MODIFICATION: true},
     };
     let filtre = doc!{ "instance_id": instance_id, "connecte": true };
-    collection.update_many(filtre, ops, None).await?;
+    collection.update_many_with_session(filtre, ops, None, session).await?;
 
     Ok(Some(middleware.reponse_ok(None, None)?))
 }

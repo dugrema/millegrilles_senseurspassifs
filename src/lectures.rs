@@ -844,3 +844,27 @@ async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &Information
 //         }
 //     }
 // }
+
+/// Call after rebuilding the database to reset the sensors per device
+async fn rebuild_sensor_list<M>(middleware: &M, session: &mut ClientSession)
+    -> Result<(), Error>
+    where M: MongoDao
+{
+    let collection_appareils = middleware.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let collection_lectures = middleware.get_collection_typed::<TransactionLectureHoraire>(COLLECTIONS_LECTURES)?;
+
+    let mut curseur_appareils = collection_appareils.find_with_session(doc!{}, None, session).await?;
+    while curseur_appareils.advance(session).await? {
+        let appareil = curseur_appareils.deserialize_current()?;
+
+        // Find all senseur_id and max heure for each device.
+        let filtre = doc! {
+            CHAMP_USER_ID: &appareil.user_id,
+            CHAMP_UUID_APPAREIL: &appareil.uuid_appareil,
+        };
+
+
+    }
+
+    Ok(())
+}
