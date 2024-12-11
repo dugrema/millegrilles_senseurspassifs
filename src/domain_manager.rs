@@ -4,18 +4,20 @@ use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::backup::BackupStarter;
 use millegrilles_common_rust::certificats::ValidateurX509;
 use millegrilles_common_rust::chrono::Timelike;
+use millegrilles_common_rust::configuration::ConfigMessages;
 use millegrilles_common_rust::constantes::{Securite, DEFAULT_Q_TTL};
 use millegrilles_common_rust::db_structs::TransactionValide;
 use millegrilles_common_rust::domaines_traits::{AiguillageTransactions, ConsommateurMessagesBus, GestionnaireBusMillegrilles, GestionnaireDomaineV2};
-use millegrilles_common_rust::domaines_v2::GestionnaireDomaineSimple;
+use millegrilles_common_rust::domaines_v2::{prepare_mongodb_domain_indexes, GestionnaireDomaineSimple};
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::mongo_dao::MongoDao;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{Middleware, MiddlewareMessages};
+use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::MessageValide;
-
+use crate::builder::preparer_index_mongodb;
 use crate::commandes::consommer_commande;
 use crate::requetes::consommer_requete;
 use crate::common::*;
@@ -100,11 +102,12 @@ impl ConsommateurMessagesBus for SenseursPassifsDomainManager {
 
 #[async_trait]
 impl AiguillageTransactions for SenseursPassifsDomainManager {
-    async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide) -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
+    async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
+        -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao
     {
-        aiguillage_transaction(self, middleware, transaction).await
+        aiguillage_transaction(self, middleware, transaction, session).await
     }
 }
 
@@ -132,6 +135,19 @@ impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
 
         Ok(())
     }
+
+    async fn preparer_database_mongodb<M>(&self, middleware: &M) -> Result<(), CommonError>
+    where
+        M: MongoDao + ConfigMessages
+    {
+        // Handle transaction collection init being overridden
+        if let Some(collection_name) = self.get_collection_transactions() {
+            prepare_mongodb_domain_indexes(middleware, collection_name).await?;
+        }
+        preparer_index_mongodb(middleware).await?;  // Specialised indexes for domain collections
+        Ok(())
+    }
+
 }
 
 pub fn preparer_queues(manager: &SenseursPassifsDomainManager) -> Vec<QueueType> {

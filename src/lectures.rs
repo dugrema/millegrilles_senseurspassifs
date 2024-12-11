@@ -21,7 +21,7 @@ use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{Mes
 use millegrilles_common_rust::recepteur_messages::MessageValide;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
 use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
-
+use millegrilles_common_rust::mongodb::ClientSession;
 use crate::common::*;
 use crate::commandes::RowRelais;
 use crate::domain_manager::SenseursPassifsDomainManager;
@@ -349,123 +349,120 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionna
         "heure": {"$lte": date_aggregation},
     };
 
+    let mut session = middleware.get_session().await?;
+    session.start_transaction(None).await?;
+
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-    let mut curseur = collection.find(filtre, None).await?;
-    while let Some(d) = curseur.next().await {
-        match convertir_bson_deserializable::<LecturesCumulees>(d?) {
-            Ok(l) => generer_transactions(middleware, gestionnaire, l).await?,
+    let mut curseur = collection.find_with_session(filtre, None, &mut session).await?;
+    while let Some(row) = curseur.next(&mut session).await {
+        match convertir_bson_deserializable::<LecturesCumulees>(row?) {
+            Ok(lecture) => generer_transactions(middleware, gestionnaire, lecture, &mut session).await?,
             Err(e) => {
                 error!("lectures.generer_transactions_lectures_horaires Erreur mapping LecturesCumulees : {:?}", e);
             }
         }
     }
+    session.commit_transaction().await?;
 
     Ok(())
 }
 
-async fn generer_transactions<M>(middleware: &M, gestionnaire: &SenseursPassifsDomainManager, lectures: LecturesCumulees) -> Result<(), Error>
+async fn generer_transactions<M>(
+    middleware: &M, gestionnaire: &SenseursPassifsDomainManager, lectures: LecturesCumulees, session: &mut ClientSession)
+    -> Result<(), Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
         lectures.heure, lectures.user_id, lectures.uuid_appareil, lectures.senseur_id);
 
     let heure = lectures.heure;
-    debug!("Heure : {:?}", heure);
+    debug!("generer_transactions Heure : {:?}", heure);
 
-    // let heure = convertir_value_mongodate(heure)?;
+    let mut val_max: Option<f64> = None;
+    let mut val_min: Option<f64> = None;
 
-    // On ne traite pas les donnees de l'heure courante.
-    // let mut donnees_lectures: Vec<LectureSenseur> = lectures.lectures.into_iter()
-    //     .filter(|l| l.timestamp.get_datetime() < &heure_courante)
-    //     .collect();
+    // Calcul de moyenne
+    let mut val_somme: f64 = 0.0;
+    let mut compte_valeurs: u32 = 0;
+    let mut fract_max: u8 = 0 ;  // Nombre de digits dans partie fractionnaire (pour round avg)
 
-    // let mut groupes_heures = HashMap::new();
-    // for lecture in donnees_lectures.into_iter() {
-    //     let heure = heure_juste(lecture.timestamp.get_datetime()).timestamp();
-    //     let mut groupe_heure = match groupes_heures.get_mut(&heure) {
-    //         Some(g) => g,
-    //         None => {
-    //             groupes_heures.insert(heure, vec![]);
-    //             groupes_heures.get_mut(&heure).expect("get")
-    //         }
-    //     };
-    //     groupe_heure.push(lecture);
-    // }
+    for lecture in &lectures.lectures {
+        if let Some(valeur) = lecture.valeur {
 
-    // Generer transactions pour chaque heure
-    // for (heure, groupe) in groupes_heures {
-        // let heure_dt = DateTime<Utc>::from_i64(heure);
-        // let heure_max = lectures.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
-        // debug!("Generer transactions pour heure {:?} (< {:?})", lectures.heure, heure_max);
+            fract_max = max(fract_max, compter_fract_digits(valeur));
 
-        let mut val_max: Option<f64> = None;
-        let mut val_min: Option<f64> = None;
-        // Calcul de moyenne
-        let mut val_somme: f64 = 0.0;
-        let mut compte_valeurs: u32 = 0;
-        let mut fract_max: u8 = 0 ;  // Nombre de digits dans partie fractionnaire (pour round avg)
+            // Calcul moyenne
+            compte_valeurs += 1;
+            val_somme += valeur;
 
-        for lecture in &lectures.lectures {
-            if let Some(valeur) = lecture.valeur {
+            // Max
+            match val_max {
+                Some(v) => {
+                    if v < valeur {
+                        val_max = Some(valeur);  // Remplacer max
+                    }
+                },
+                None => val_max = Some(valeur)
+            }
 
-                fract_max = max(fract_max, compter_fract_digits(valeur));
-
-                // Calcul moyenne
-                compte_valeurs += 1;
-                val_somme += valeur;
-
-                // Max
-                match val_max {
-                    Some(v) => {
-                        if v < valeur {
-                            val_max = Some(valeur);  // Remplacer max
-                        }
-                    },
-                    None => val_max = Some(valeur)
-                }
-
-                // Min
-                match val_min {
-                    Some(v) => {
-                        if v > valeur {
-                            val_min = Some(valeur);  // Remplacer min
-                        }
-                    },
-                    None => val_min = Some(valeur)
-                }
+            // Min
+            match val_min {
+                Some(v) => {
+                    if v > valeur {
+                        val_min = Some(valeur);  // Remplacer min
+                    }
+                },
+                None => val_min = Some(valeur)
             }
         }
+    }
 
-        let moyenne = if compte_valeurs > 0 {
-            let moyenne = val_somme / compte_valeurs as f64;
-            Some(arrondir(moyenne, fract_max as i32))
-        } else {
-            None
-        };
+    let moyenne = if compte_valeurs > 0 {
+        let moyenne = val_somme / compte_valeurs as f64;
+        Some(arrondir(moyenne, fract_max as i32))
+    } else {
+        None
+    };
 
-        let transaction = TransactionLectureHoraire {
-            heure,
-            user_id: lectures.user_id,
-            uuid_appareil: lectures.uuid_appareil,
-            senseur_id: lectures.senseur_id,
-            lectures: lectures.lectures,
-            min: val_min,
-            max: val_max,
-            avg: moyenne
-        };
+    let transaction = TransactionLectureHoraire {
+        heure,
+        user_id: lectures.user_id,
+        uuid_appareil: lectures.uuid_appareil,
+        senseur_id: lectures.senseur_id,
+        lectures: lectures.lectures,
+        min: val_min,
+        max: val_max,
+        avg: moyenne
+    };
 
-        // let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE, vec![Securite::L4Secure])
-        //     .blocking(false)
-        //     .build();
+    debug!("Soumettre transaction : {:?}", transaction);
+    match sauvegarder_traiter_transaction_serializable_v2(
+        middleware, &transaction, gestionnaire, session, DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE).await
+    {
+        Ok(_) => {
+            // Cleanup table lectures
+            // let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
+            let filtre = doc! {
+                CHAMP_USER_ID: &transaction.user_id,
+                CHAMP_UUID_APPAREIL: &transaction.uuid_appareil,
+                "senseur_id": &transaction.senseur_id,
+                "heure": &transaction.heure,
+            };
 
-        debug!("Soumettre transaction : {:?}", transaction);
-        // middleware.soumettre_transaction(routage, &transaction).await?;
-        if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
-            middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE).await
-        {
+            // debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
+            debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}", filtre);
+            let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
+            match collection.delete_one(filtre, None).await {
+                Ok(r) => {
+                    debug!("transactions.transaction_senseur_horaire Resultat suppression lectures archivess : {:?}", r);
+                }
+                Err(e) => warn!("transactions.transaction_senseur_horaire Erreur suppression lectures {:?}", e)
+            }
+        },
+        Err(e) => {
             error!("generer_transactions Erreur traitemnet transaction {:?}", e)
         }
-    // }
+    }
 
     Ok(())
 }

@@ -17,7 +17,7 @@ use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
-
+use millegrilles_common_rust::mongodb::ClientSession;
 use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
 use crate::evenements::EvenementPresenceAppareilUser;
@@ -40,20 +40,23 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
 
     let (_, action) = get_domaine_action!(m.type_message);
 
-    match action.as_str() {
+    let mut session = middleware.get_session().await?;
+    session.start_transaction(None).await?;
+
+    let result = match action.as_str() {
         COMMANDE_INSCRIRE_APPAREIL => commande_inscrire_appareil(middleware, m, gestionnaire).await,
         COMMANDE_CHALLENGE_APPAREIL => commande_challenge_appareil(middleware, m, gestionnaire).await,
-        COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire).await,
+        COMMANDE_SIGNER_APPAREIL => commande_signer_appareil(middleware, m, gestionnaire, &mut session).await,
         COMMANDE_CONFIRMER_RELAI => commande_confirmer_relai(middleware, m, gestionnaire).await,
         COMMANDE_RESET_CERTIFICATS => commande_reset_certificats(middleware, m, gestionnaire).await,
         COMMAND_DISCONNECT_RELAY => command_disconnect_relay(middleware, m).await,
-        TRANSACTION_MAJ_CONFIGURATION_USAGER => commande_maj_configuration_usager(middleware, m, gestionnaire).await,
+        TRANSACTION_MAJ_CONFIGURATION_USAGER => commande_maj_configuration_usager(middleware, m, gestionnaire, &mut session).await,
         TRANSACTION_MAJ_SENSEUR |
         TRANSACTION_MAJ_NOEUD |
         TRANSACTION_SUPPRESSION_SENSEUR |
         TRANSACTION_MAJ_APPAREIL => {
             // Pour l'instant, aucune autre validation. On traite comme une transaction
-            Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire).await?)
+            Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire, &mut session).await?)
         }
         TRANSACTION_APPAREIL_SUPPRIMER |
         TRANSACTION_APPAREIL_RESTAURER |
@@ -62,9 +65,20 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
                 Err(format!("senseurspassifs.consommer_commande: Commande autorisation invalide (user_id requis) pour message {:?}", m.type_message))?
             }
             // Pour l'instant, aucune autre validation. On traite comme une transaction
-            Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire).await?)
+            Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire, &mut session).await?)
         }
         _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, action))?,
+    };
+
+    match result {
+        Ok(inner) => {
+            session.commit_transaction().await?;
+            Ok(inner)
+        },
+        Err(e) => {
+            session.abort_transaction().await?;
+            Err(e)
+        },
     }
 }
 
@@ -170,7 +184,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestion
     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
-async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + ValidateurX509 + MongoDao
 {
@@ -238,7 +252,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
             user_id,
         };
         sauvegarder_traiter_transaction_serializable_v2(
-            middleware, &transaction, gestionnaire,
+            middleware, &transaction, gestionnaire, session,
             DOMAINE_NOM, TRANSACTION_INIT_APPAREIL).await?;
     }
 
@@ -251,7 +265,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
     Ok(Some(middleware.build_reponse(reponse)?.0))
 }
 
-async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + ValidateurX509 + MongoDao
 {
@@ -264,7 +278,7 @@ async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, 
         return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
     };
 
-    Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire).await?)
+    Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire, session).await?)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

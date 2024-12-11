@@ -76,13 +76,13 @@ where M: Middleware + IsConfigNoeud
         .expect("initialiser");
 
     // Preparer des ressources additionnelles
-    preparer_index_mongodb(middleware, gestionnaire).await
-        .expect("preparer_index_mongodb");
+    // preparer_index_mongodb(middleware, gestionnaire).await
+    //     .expect("preparer_index_mongodb");
 
     Ok((gestionnaire, futures))
 }
 
-async fn preparer_index_mongodb<M>(middleware: &M, _gestionnaire: &SenseursPassifsDomainManager) -> Result<(), CommonError>
+pub async fn preparer_index_mongodb<M>(middleware: &M) -> Result<(), CommonError>
 where M: MongoDao + ConfigMessages
 {
     let options_appareils = IndexOptions {

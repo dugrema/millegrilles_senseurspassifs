@@ -11,17 +11,19 @@ use millegrilles_common_rust::transactions::Transaction;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::db_structs::TransactionValide;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
+use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, InsertOneOptions, ReturnDocument, UpdateOptions, WriteConcern};
 use millegrilles_common_rust::serde_json::json;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::error::Error;
 use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction_serializable, sauvegarder_traiter_transaction_serializable_v2};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
-
+use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
+use millegrilles_common_rust::mongodb::ClientSession;
 use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
 
-pub async fn aiguillage_transaction<M>(gestionnaire: &SenseursPassifsDomainManager, middleware: &M, transaction: TransactionValide)
+pub async fn aiguillage_transaction<M>(
+    gestionnaire: &SenseursPassifsDomainManager, middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -36,22 +38,26 @@ pub async fn aiguillage_transaction<M>(gestionnaire: &SenseursPassifsDomainManag
     debug!("aiguillage_transaction {}", action);
 
     match action.as_str() {
-        TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire).await,
+        TRANSACTION_MAJ_SENSEUR => transaction_maj_senseur(middleware, transaction, gestionnaire, session).await,
         TRANSACTION_MAJ_NOEUD => transaction_maj_noeud(middleware, transaction, gestionnaire).await,
         TRANSACTION_SUPPRESSION_SENSEUR => transaction_suppression_senseur(middleware, transaction, gestionnaire).await,
-        TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_APPAREIL => transaction_maj_appareil(middleware, transaction, gestionnaire).await,
-        TRANSACTION_SENSEUR_HORAIRE => transaction_senseur_horaire(middleware, transaction, gestionnaire).await,
+        TRANSACTION_SENSEUR_HORAIRE => transaction_senseur_horaire(middleware, transaction, session).await,
         TRANSACTION_INIT_APPAREIL => transaction_initialiser_appareil(middleware, transaction, gestionnaire).await,
         TRANSACTION_APPAREIL_SUPPRIMER => transaction_appareil_supprimer(middleware, transaction, gestionnaire).await,
         TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, gestionnaire).await,
         TRANSACTION_MAJ_CONFIGURATION_USAGER => transaction_maj_configuration_usager(middleware, transaction, gestionnaire).await,
         TRANSACTION_SAUVEGARDER_PROGRAMME => transaction_sauvegarder_programme(middleware, transaction, gestionnaire).await,
+
+        // Legacy
+        TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, gestionnaire).await,
+
         _ => Err(Error::String(format!("senseurspassifs.aiguillage_transaction: Transaction {} est de type non gere : {}", transaction.transaction.id, action))),
     }
 }
 
-async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn transaction_maj_senseur<M>(
+    middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -87,7 +93,7 @@ async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionVali
         };
         let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur, CHAMP_USER_ID: &user_id };
         let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
-        match collection.find_one_and_update(filtre, ops, Some(opts)).await {
+        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
             Ok(r) => match r {
                 Some(r) => match convertir_bson_deserializable::<TransactionMajSenseur>(r) {
                     Ok(r) => r,
@@ -115,7 +121,7 @@ async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionVali
             Ok(n) => n,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur ouverture collection noeuds: {:?}", e))?
         };
-        let resultat = match collection_noeud.update_one(filtre, ops, Some(opts)).await {
+        let resultat = match collection_noeud.update_one_with_session(filtre, ops, Some(opts), session).await {
             Ok(r) => r,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement maj noeud : {:?}", e))?
         };
@@ -129,7 +135,7 @@ async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionVali
             //     .blocking(false)
             //     .build();
             if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
-                middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_MAJ_NOEUD).await
+                middleware, &transaction, gestionnaire, session, DOMAINE_NOM, TRANSACTION_MAJ_NOEUD).await
             {
                 error!("senseurspassifs.transaction_maj_senseur Erreur sauvegarder_traiter_transaction_serializable pour instance_id {} : {:?}", transaction_cle.instance_id, e);
             }
@@ -145,12 +151,6 @@ async fn transaction_maj_senseur<M>(middleware: &M, transaction: TransactionVali
 
     debug!("transaction_maj_senseur Resultat ajout transaction : {:?}", document_transaction);
     Ok(Some(middleware.build_reponse(&document_transaction)?.0))
-    // let reponse = match middleware.build_reponse(&document_transaction) {
-    //     Ok(reponse) => Ok(Some(reponse)),
-    //     Err(e) => Err(format!("senseurspassifs.document_transaction Erreur preparation reponse : {:?}", e))
-    // }?;
-    //
-    // Ok(reponse)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -620,11 +620,11 @@ async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide,
             };
 
             let filtre = doc! {
+                "user_id": &contenu_transaction.user_id,
                 CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur,
                 "derniere_lecture": &plus_recente_lecture.timestamp,
-                "user_id": &contenu_transaction.user_id,
             };
-            let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
+            // let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
             let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
             let ops = doc! {
                 "$set": {
@@ -647,22 +647,23 @@ async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide,
             };
             debug!("transaction_lectures Resultat : {:?}", resultat);
 
-            if middleware.get_mode_regeneration() == false {
-                if let Some(_) = resultat.upserted_id {
-                    debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
-                    let transaction = TransactionMajSenseur::new(
-                        &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
-                    // let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR, vec![Securite::L4Secure])
-                    //     .blocking(false)
-                    //     .build();
-                    // middleware.soumettre_transaction(routage, &transaction).await?;
-                    if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
-                        middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR).await
-                    {
-                        error!("Erreur sauvegarder_traiter_transaction_serializable pour nouveau senseur : {:?}", e);
-                    }
-                }
-            }
+            // Legacy - logique ici n'est plus necessaire, on est toujours en regeneration
+            // if middleware.get_mode_regeneration() == false {
+            //     if let Some(_) = resultat.upserted_id {
+            //         debug!("Creer transaction pour nouveau senseur {}", contenu_transaction.uuid_senseur);
+            //         let transaction = TransactionMajSenseur::new(
+            //             &contenu_transaction.uuid_senseur, &contenu_transaction.instance_id);
+            //         // let routage = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR, vec![Securite::L4Secure])
+            //         //     .blocking(false)
+            //         //     .build();
+            //         // middleware.soumettre_transaction(routage, &transaction).await?;
+            //         if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
+            //             middleware, &transaction, gestionnaire, DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR).await
+            //         {
+            //             error!("Erreur sauvegarder_traiter_transaction_serializable pour nouveau senseur : {:?}", e);
+            //         }
+            //     }
+            // }
         },
         None => {
             warn!("Transaction lectures senseur {} recue sans contenu (aucunes lectures)", contenu_transaction.uuid_senseur);
@@ -760,83 +761,63 @@ impl TransactionMajSenseur {
     }
 }
 
-async fn transaction_senseur_horaire<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SenseurHoraireRow {
+    #[serde(rename="_mg-creation", with="chrono_datetime_as_bson_datetime")]
+    creation: DateTime<Utc>,
+    user_id: String,
+    uuid_appareil: String,
+    senseur_id: String,
+    #[serde(with="chrono_datetime_as_bson_datetime")]
+    heure: DateTime<Utc>,
+    min: Option<f64>,
+    max: Option<f64>,
+    avg: Option<f64>,
+}
+
+impl From<&TransactionLectureHoraire> for SenseurHoraireRow {
+    fn from(value: &TransactionLectureHoraire) -> Self {
+        Self {
+            creation: Utc::now(),
+            user_id: value.user_id.clone(),
+            uuid_appareil: value.uuid_appareil.clone(),
+            senseur_id: value.senseur_id.clone(),
+            heure: value.heure,
+            min: value.min,
+            max: value.max,
+            avg: value.avg,
+        }
+    }
+}
+
+async fn transaction_senseur_horaire<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
     debug!("transaction_senseur_horaire Consommer transaction : {:?}", transaction.transaction.id);
     let transaction_convertie: TransactionLectureHoraire = serde_json::from_str(transaction.transaction.contenu.as_str())?;
+    let senseur_horaire_row = SenseurHoraireRow::from(&transaction_convertie);
 
     // Inserer dans la table de lectures senseurs horaires
-    {
-        let now = Utc::now();
-        let mut doc_insert = doc! {
-            CHAMP_CREATION: &now,
+    let collection = middleware.get_collection_typed::<SenseurHoraireRow>(COLLECTIONS_SENSEURS_HORAIRE)?;
+    if middleware.get_mode_regeneration() == true {
+        // HACK - duplicate transactions have been produced. Remove once all transactions are fixed/migrated
+        let filtre = doc!{
             CHAMP_USER_ID: &transaction_convertie.user_id,
             CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
             "senseur_id": &transaction_convertie.senseur_id,
-            "heure": &transaction_convertie.heure,
+            "heure": &transaction_convertie.heure
         };
-
-        if let Some(v) = transaction_convertie.min {
-            doc_insert.insert("min", v);
-        }
-        if let Some(v) = transaction_convertie.max {
-            doc_insert.insert("max", v);
-        }
-        if let Some(v) = transaction_convertie.avg {
-            doc_insert.insert("avg", v);
-        }
-
-        let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
-        match collection.insert_one(doc_insert, None).await {
-            Ok(_) => (),
-            Err(e) => {
-                warn!("transaction_senseur_horaire Erreur insertion senseurs horaire : {:?}", e)
-            }
+        let count = collection.count_documents_with_session(filtre, None, session).await?;
+        if count > 0 {
+            warn!("transaction_senseur_horaire Ignoring duplicate transaction: {} on rebuild", transaction.transaction.id);
+            return Ok(None);
         }
     }
-
-    // Detecter type de lectures (aucun si vide)
-    let mut type_donnees = None;
-    for l in &transaction_convertie.lectures {
-        type_donnees = Some(l.type_.clone());
-        break
-    }
-
-    // Cleanup table lectures
-    // let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
-    let filtre = doc! {
-        CHAMP_USER_ID: &transaction_convertie.user_id,
-        CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
-        "senseur_id": &transaction_convertie.senseur_id,
-        "heure": &transaction_convertie.heure,
-    };
-    // let ops = doc! {
-    //     "$set": {"derniere_aggregation": heure_max},
-    //     "$pull": {"lectures": {"timestamp": {"$gte": &transaction_convertie.heure.get_datetime().timestamp(), "$lt": heure_max.timestamp()}}},
-    //     "$currentDate": {CHAMP_MODIFICATION: true},
-    // };
-    // debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
-    debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}", filtre);
-    let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-    match collection.delete_one(filtre, None).await {
-        Ok(r) => {
-            debug!("transactions.transaction_senseur_horaire Resultat suppression lectures archivess : {:?}", r);
-        }
-        Err(e) => warn!("transactions.transaction_senseur_horaire Erreur suppression lectures {:?}", e)
-    }
-    // match collection.update_many(filtre, ops, None).await {
-    //     Ok(result) => {
-    //         if result.modified_count != 1 {
-    //             info!("transaction_senseur_horaire Aucune modification dans table lectures");
-    //         }
-    //     },
-    //     Err(e) => Err(format!("transactions.transaction_senseur_horaire Erreur update_many : {:?}", e))?
-    // }
+    collection.insert_one_with_session(&senseur_horaire_row, None, session).await?;
 
     // S'assurer que l'appareil existe (e.g. pour regeneration)
-    {
+    if middleware.get_mode_regeneration() == false {
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
         let filtre = doc! {
             CHAMP_USER_ID: &transaction_convertie.user_id,
@@ -857,6 +838,13 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
             }
         };
 
+        // Detecter type de lectures (aucun si vide)
+        let mut type_donnees = None;
+        for l in &transaction_convertie.lectures {
+            type_donnees = Some(l.type_.clone());
+            break
+        }
+
         if let Some(type_donnees) = type_donnees {
             ops.insert("$set", doc!{
                 format!("types_donnees.{}", transaction_convertie.senseur_id): type_donnees
@@ -864,7 +852,7 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
         }
 
         let options = UpdateOptions::builder().upsert(true).build();
-        if let Err(e) = collection.update_one(filtre, ops, options).await {
+        if let Err(e) = collection.update_one_with_session(filtre, ops, options, session).await {
             Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
         }
     }
