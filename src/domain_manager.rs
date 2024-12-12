@@ -11,7 +11,7 @@ use millegrilles_common_rust::domaines_traits::{AiguillageTransactions, Consomma
 use millegrilles_common_rust::domaines_v2::{prepare_mongodb_domain_indexes, GestionnaireDomaineSimple};
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::mongo_dao::MongoDao;
+use millegrilles_common_rust::mongo_dao::{start_transaction_regular, MongoDao};
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{Middleware, MiddlewareMessages};
 use millegrilles_common_rust::mongodb::ClientSession;
@@ -23,7 +23,7 @@ use crate::requetes::consommer_requete;
 use crate::common::*;
 use crate::constants::*;
 use crate::evenements::consommer_evenement;
-use crate::lectures::generer_transactions_lectures_horaires;
+use crate::lectures::{generer_transactions_lectures_horaires, rebuild_sensor_list};
 use crate::maintenance::mark_devices_offline;
 use crate::transactions::aiguillage_transaction;
 
@@ -148,6 +148,23 @@ impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
         Ok(())
     }
 
+    async fn traitement_post_regeneration<M>(&self, middleware: &M) -> Result<(), CommonError>
+    where
+        M: Middleware
+    {
+        let mut session = middleware.get_session().await?;
+        start_transaction_regular(&mut session).await?;
+        match rebuild_sensor_list(middleware, &mut session).await {
+            Ok(()) => session.commit_transaction().await?,
+            Err(e) => {
+                error!("traitement_post_regeneration Error rebuilding sensor list: {:?}", e);
+                session.abort_transaction().await?;
+                Err(e)?
+            },
+        }
+
+        Ok(())
+    }
 }
 
 pub fn preparer_queues(manager: &SenseursPassifsDomainManager) -> Vec<QueueType> {

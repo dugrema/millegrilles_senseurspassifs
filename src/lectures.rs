@@ -22,9 +22,11 @@ use millegrilles_common_rust::recepteur_messages::MessageValide;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
 use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
 use millegrilles_common_rust::mongodb::ClientSession;
+
 use crate::common::*;
 use crate::commandes::RowRelais;
 use crate::domain_manager::SenseursPassifsDomainManager;
+use crate::transactions::SenseurHoraireRow;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LectureAppareilInfo {
@@ -845,25 +847,74 @@ async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &Information
 //     }
 // }
 
+#[derive(Debug, Deserialize)]
+struct DeviceHourAggregateId {
+    user_id: String,
+    uuid_appareil: String,
+    senseur_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceHourAggregateRow {
+    _id: DeviceHourAggregateId,
+    #[serde(with="chrono_datetime_as_bson_datetime")]
+    heure: DateTime<Utc>,
+}
+
 /// Call after rebuilding the database to reset the sensors per device
-async fn rebuild_sensor_list<M>(middleware: &M, session: &mut ClientSession)
+pub async fn rebuild_sensor_list<M>(middleware: &M, session: &mut ClientSession)
     -> Result<(), Error>
     where M: MongoDao
 {
     let collection_appareils = middleware.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
-    let collection_lectures = middleware.get_collection_typed::<TransactionLectureHoraire>(COLLECTIONS_LECTURES)?;
+    let collection_senseurs_horaire = middleware.get_collection_typed::<SenseurHoraireRow>(COLLECTIONS_SENSEURS_HORAIRE)?;
 
-    let mut curseur_appareils = collection_appareils.find_with_session(doc!{}, None, session).await?;
-    while curseur_appareils.advance(session).await? {
-        let appareil = curseur_appareils.deserialize_current()?;
+    let pipeline = vec![
+        doc! { "$project": {CHAMP_USER_ID: 1, CHAMP_UUID_APPAREIL: 1, "senseur_id": 1, "heure": 1} },
+        doc! { "$group": {
+            "_id": { CHAMP_USER_ID: "$user_id", CHAMP_UUID_APPAREIL: "$uuid_appareil", "senseur_id": "$senseur_id" },
+            "heure": {"$max": "$heure"},
+        } }
+    ];
+    debug!("rebuild_sensor_list Pipeline {:?}", pipeline);
+    let mut cursor = collection_senseurs_horaire.aggregate_with_session(pipeline, None, session).await?;
 
-        // Find all senseur_id and max heure for each device.
-        let filtre = doc! {
-            CHAMP_USER_ID: &appareil.user_id,
-            CHAMP_UUID_APPAREIL: &appareil.uuid_appareil,
+    while cursor.advance(session).await? {
+        let row: DeviceHourAggregateRow = convertir_bson_deserializable(cursor.deserialize_current()?)?;
+        debug!("rebuild_sensor_list Loading values for {:?}", row);
+        let filtre_row = doc!{
+            CHAMP_USER_ID: &row._id.user_id,
+            CHAMP_UUID_APPAREIL: &row._id.uuid_appareil,
+            "senseur_id": &row._id.senseur_id,
+            "heure": &row.heure,
         };
+        let lecture = collection_senseurs_horaire.find_one_with_session(filtre_row, None, session).await?;
+        if let Some(lecture) = lecture {
+            debug!("rebuild_sensor_list Lecture loaded: {:?}", lecture);
+            let value = match lecture.avg {
+                Some(value) => doc!{
+                    "timestamp": lecture.heure.timestamp(),
+                    "type": lecture.type_,
+                    "valeur": value,
+                },
+                None => doc!{
+                    "timestamp": lecture.heure.timestamp(),
+                    "type": lecture.type_,
+                }
+            };
 
+            let filtre = doc!{CHAMP_USER_ID: lecture.user_id, CHAMP_UUID_APPAREIL: lecture.uuid_appareil};
+            let ops = doc!{
+                "$set": { format!{"senseurs.{}", lecture.senseur_id}: value },
+                "$currentDate": { CHAMP_MODIFICATION: true }
+            };
 
+            debug!("rebuild_sensor_list Row filtre: {:?} ops {:?}", filtre, ops);
+
+            collection_appareils.update_one_with_session(filtre, ops, None, session).await?;
+        } else {
+            info!("rebuild_sensor_list No match for {:?}", row);
+        }
     }
 
     Ok(())

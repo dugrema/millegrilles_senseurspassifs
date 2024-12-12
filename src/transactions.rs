@@ -763,19 +763,19 @@ impl TransactionMajSenseur {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct SenseurHoraireRow {
+pub struct SenseurHoraireRow {
     #[serde(rename="_mg-creation", with="chrono_datetime_as_bson_datetime")]
-    creation: DateTime<Utc>,
-    user_id: String,
-    uuid_appareil: String,
-    senseur_id: String,
+    pub creation: DateTime<Utc>,
+    pub user_id: String,
+    pub uuid_appareil: String,
+    pub senseur_id: String,
     #[serde(with="chrono_datetime_as_bson_datetime")]
-    heure: DateTime<Utc>,
+    pub heure: DateTime<Utc>,
     #[serde(rename="type")]
-    type_: Option<String>,
-    min: Option<f64>,
-    max: Option<f64>,
-    avg: Option<f64>,
+    pub type_: Option<String>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub avg: Option<f64>,
 }
 
 impl From<&TransactionLectureHoraire> for SenseurHoraireRow {
