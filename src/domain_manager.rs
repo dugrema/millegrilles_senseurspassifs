@@ -56,6 +56,8 @@ impl GestionnaireDomaineV2 for SenseursPassifsDomainManager {
             // COLLECTIONS_RELAIS.to_string(),
         ])
     }
+
+    fn get_rebuild_transaction_batch_size(&self) -> u64 { 1000 }
 }
 
 impl GestionnaireBusMillegrilles for SenseursPassifsDomainManager {
