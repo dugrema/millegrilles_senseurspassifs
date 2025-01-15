@@ -12,7 +12,7 @@ use millegrilles_common_rust::transactions::Transaction;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::db_structs::TransactionValide;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, InsertOneOptions, ReturnDocument, UpdateOptions, WriteConcern};
+use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, FindOneOptions, Hint, InsertOneOptions, ReturnDocument, UpdateOptions, WriteConcern};
 use millegrilles_common_rust::serde_json::json;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::error::Error;
@@ -818,8 +818,8 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
             "senseur_id": &transaction_convertie.senseur_id,
             "heure": &transaction_convertie.heure
         };
-        let count = collection.count_documents_with_session(filtre, None, session).await?;
-        if count > 0 {
+        let options = FindOneOptions::builder().hint(Hint::Name("lectures_horaire".to_string())).build();
+        if collection.find_one_with_session(filtre, options, session).await?.is_some() {
             warn!("transaction_senseur_horaire Ignoring duplicate transaction: {} on rebuild", transaction.transaction.id);
             return Ok(None);
         }
