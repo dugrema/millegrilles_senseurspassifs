@@ -7,7 +7,7 @@ use millegrilles_common_rust::{chrono, serde_json};
 use millegrilles_common_rust::base64::engine::DecodePaddingMode::RequireNone;
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, start_transaction_regeneration, MongoDao};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao};
 use millegrilles_common_rust::transactions::Transaction;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::db_structs::TransactionValide;
@@ -810,36 +810,39 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
 
     // Inserer dans la table de lectures senseurs horaires
     let collection = middleware.get_collection_typed::<SenseurHoraireRow>(COLLECTIONS_SENSEURS_HORAIRE)?;
-    // if middleware.get_mode_regeneration() == true {
-    //     // HACK - duplicate transactions have been produced. Remove once all transactions are fixed/migrated
-    //     let filtre = doc!{
-    //         CHAMP_USER_ID: &transaction_convertie.user_id,
-    //         CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
-    //         "senseur_id": &transaction_convertie.senseur_id,
-    //         "heure": &transaction_convertie.heure
-    //     };
-    //     let options = FindOneOptions::builder().hint(Hint::Name("lectures_horaire".to_string())).build();
-    //     if collection.find_one_with_session(filtre, options, session).await?.is_some() {
-    //         warn!("transaction_senseur_horaire Ignoring duplicate transaction: {} on rebuild", transaction.transaction.id);
-    //         return Ok(None);
-    //     }
-    // }
-
     if middleware.get_mode_regeneration() == true {
-        // Commit previous changes, the following transaction can fail on duplicates.
-        session.commit_transaction().await?;
-        start_transaction_regeneration(session).await?;
-    }
-
-    if let Err(e) = collection.insert_one_with_session(&senseur_horaire_row, None, session).await {
-        if middleware.get_mode_regeneration() == true {  // Rebuilding
-            error!("transaction_senseur_horaire Error processing transaction, skipping: {:?}", e);
-            session.abort_transaction().await?;
-            start_transaction_regeneration(session).await?;
-        } else {
-            Err(e)?  // Re-raise error for standard transaction processing
+        // HACK - duplicate transactions have been produced. Remove once all transactions are fixed/migrated
+        let filtre = doc!{
+            CHAMP_USER_ID: &transaction_convertie.user_id,
+            CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+            "senseur_id": &transaction_convertie.senseur_id,
+            "heure": &transaction_convertie.heure
+        };
+        let options = FindOneOptions::builder().hint(Hint::Name("lectures_horaire".to_string())).build();
+        if collection.find_one_with_session(filtre, options, session).await?.is_some() {
+            warn!("transaction_senseur_horaire Ignoring duplicate transaction: {} on rebuild", transaction.transaction.id);
+            return Ok(None);
         }
     }
+
+    collection.insert_one_with_session(&senseur_horaire_row, None, session).await?;
+
+    // Other approach - pre-commit (slow)
+    // if middleware.get_mode_regeneration() == true {
+    //     // Commit previous changes, the following transaction can fail on duplicates.
+    //     session.commit_transaction().await?;
+    //     start_transaction_regeneration(session).await?;
+    // }
+
+    // if let Err(e) = collection.insert_one_with_session(&senseur_horaire_row, None, session).await {
+    //     if middleware.get_mode_regeneration() == true {  // Rebuilding
+    //         error!("transaction_senseur_horaire Error processing transaction, skipping: {:?}", e);
+    //         session.abort_transaction().await?;
+    //         start_transaction_regeneration(session).await?;
+    //     } else {
+    //         Err(e)?  // Re-raise error for standard transaction processing
+    //     }
+    // }
 
     // S'assurer que l'appareil existe (e.g. pour regeneration)
     if middleware.get_mode_regeneration() == false {
