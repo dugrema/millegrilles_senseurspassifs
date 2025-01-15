@@ -7,7 +7,7 @@ use millegrilles_common_rust::{chrono, serde_json};
 use millegrilles_common_rust::base64::engine::DecodePaddingMode::RequireNone;
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, start_transaction_regeneration, MongoDao};
 use millegrilles_common_rust::transactions::Transaction;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::db_structs::TransactionValide;
@@ -824,7 +824,22 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
     //         return Ok(None);
     //     }
     // }
-    collection.insert_one_with_session(&senseur_horaire_row, None, session).await?;
+
+    if middleware.get_mode_regeneration() == true {
+        // Commit previous changes, the following transaction can fail on duplicates.
+        session.commit_transaction().await?;
+        start_transaction_regeneration(session).await?;
+    }
+
+    if let Err(e) = collection.insert_one_with_session(&senseur_horaire_row, None, session).await {
+        if middleware.get_mode_regeneration() == true {  // Rebuilding
+            error!("transaction_senseur_horaire Error processing transaction, skipping: {:?}", e);
+            session.abort_transaction().await?;
+            start_transaction_regeneration(session).await?;
+        } else {
+            Err(e)?  // Re-raise error for standard transaction processing
+        }
+    }
 
     // S'assurer que l'appareil existe (e.g. pour regeneration)
     if middleware.get_mode_regeneration() == false {
