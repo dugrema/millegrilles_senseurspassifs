@@ -810,20 +810,20 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
 
     // Inserer dans la table de lectures senseurs horaires
     let collection = middleware.get_collection_typed::<SenseurHoraireRow>(COLLECTIONS_SENSEURS_HORAIRE)?;
-    if middleware.get_mode_regeneration() == true {
-        // HACK - duplicate transactions have been produced. Remove once all transactions are fixed/migrated
-        let filtre = doc!{
-            CHAMP_USER_ID: &transaction_convertie.user_id,
-            CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
-            "senseur_id": &transaction_convertie.senseur_id,
-            "heure": &transaction_convertie.heure
-        };
-        let options = FindOneOptions::builder().hint(Hint::Name("lectures_horaire".to_string())).build();
-        if collection.find_one_with_session(filtre, options, session).await?.is_some() {
-            warn!("transaction_senseur_horaire Ignoring duplicate transaction: {} on rebuild", transaction.transaction.id);
-            return Ok(None);
-        }
-    }
+    // if middleware.get_mode_regeneration() == true {
+    //     // HACK - duplicate transactions have been produced. Remove once all transactions are fixed/migrated
+    //     let filtre = doc!{
+    //         CHAMP_USER_ID: &transaction_convertie.user_id,
+    //         CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+    //         "senseur_id": &transaction_convertie.senseur_id,
+    //         "heure": &transaction_convertie.heure
+    //     };
+    //     let options = FindOneOptions::builder().hint(Hint::Name("lectures_horaire".to_string())).build();
+    //     if collection.find_one_with_session(filtre, options, session).await?.is_some() {
+    //         warn!("transaction_senseur_horaire Ignoring duplicate transaction: {} on rebuild", transaction.transaction.id);
+    //         return Ok(None);
+    //     }
+    // }
     collection.insert_one_with_session(&senseur_horaire_row, None, session).await?;
 
     // S'assurer que l'appareil existe (e.g. pour regeneration)
