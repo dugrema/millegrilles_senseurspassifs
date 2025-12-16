@@ -49,6 +49,7 @@ pub async fn aiguillage_transaction<M>(
         TRANSACTION_APPAREIL_RESTAURER => transaction_appareil_restaurer(middleware, transaction, session).await,
         TRANSACTION_MAJ_CONFIGURATION_USAGER => transaction_maj_configuration_usager(middleware, transaction, session).await,
         TRANSACTION_SAUVEGARDER_PROGRAMME => transaction_sauvegarder_programme(middleware, transaction, gestionnaire, session).await,
+        TRANSACTION_SHOW_HIDE_SENSOR => transaction_show_hide_sensor(middleware, transaction, session).await,
 
         // Legacy
         TRANSACTION_LECTURE => transaction_lectures(middleware, transaction, session).await,
@@ -928,6 +929,69 @@ async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: Tr
     let options = UpdateOptions::builder().upsert(true).build();
     if let Err(e) = collection.update_one_with_session(filtre, ops, options, session).await {
         Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur maj configuration : {:?}", e))?
+    }
+
+    Ok(Some(middleware.reponse_ok(None, None)?))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TransactionShowHideSensor {
+    uuid_appareil: String,
+    senseur_id: String,
+    show: Option<bool>,
+    hide: Option<bool>,
+}
+
+async fn transaction_show_hide_sensor<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
+                                         -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+where M: GenerateurMessages + MongoDao
+{
+    debug!("transaction_show_hide_sensor Consommer transaction : {:?}", transaction.transaction.id);
+    let contenu_transaction: TransactionShowHideSensor = serde_json::from_str(transaction.transaction.contenu.as_str())?;
+
+    let user_id = match transaction.certificat.get_user_id()? {
+        Some(user) => user.to_owned(),
+        None => Err(Error::Str("senseurspassifs.transaction_show_hide_sensor Erreur user_id absent du certificat"))?
+    };
+
+    let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &contenu_transaction.uuid_appareil };
+    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+
+    let deleted_flag = match contenu_transaction.hide {
+        Some(true) => true,
+        _ => false
+    };
+
+    let mut ops = doc! {
+        "$currentDate": { CHAMP_MODIFICATION: true }
+    };
+
+    if deleted_flag {
+        ops.insert("$addToSet", doc!{"configuration.cacher_senseurs": contenu_transaction.senseur_id});
+    } else {
+        ops.insert("$pull", doc!{"configuration.cacher_senseurs": contenu_transaction.senseur_id});
+    }
+
+    let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
+    let doc_appareil = match collection.find_one_and_update_with_session(filtre, ops, options, session).await {
+        Ok(inner) => match inner {
+            Some(inner) => {
+                let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {
+                    Ok(inner) => inner,
+                    Err(e) => Err(format!("senseurspassifs.transaction_show_hide_sensor Erreur mapping DocAppareil {:?}", e))?
+                };
+                doc_appareil
+            },
+            None => Err(format!("senseurspassifs.transaction_show_hide_sensor Appareil {} inconnu", contenu_transaction.uuid_appareil))?
+        },
+        Err(e) => Err(format!("senseurspassifs.transaction_show_hide_sensor Erreur DB {:?}", e))?
+    };
+
+    {
+        let routage_evenement = RoutageMessageAction::builder(DOMAINE_NOM, TRANSACTION_MAJ_APPAREIL, vec![Securite::L2Prive])
+            .partition(&user_id)
+            .build();
+        middleware.emettre_evenement(routage_evenement, &doc_appareil).await?;
     }
 
     Ok(Some(middleware.reponse_ok(None, None)?))

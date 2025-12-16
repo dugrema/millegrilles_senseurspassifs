@@ -167,6 +167,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
         TRANSACTION_APPAREIL_SUPPRIMER,
         TRANSACTION_APPAREIL_RESTAURER,
         TRANSACTION_MAJ_CONFIGURATION_USAGER,
+        TRANSACTION_SHOW_HIDE_SENSOR,
         COMMANDE_INSCRIRE_APPAREIL,
         COMMANDE_CHALLENGE_APPAREIL,
         COMMANDE_SIGNER_APPAREIL,
@@ -197,23 +198,23 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
 
     let mut rk_transactions = Vec::new();
 
-    let transactions_sec = vec![
-        TRANSACTION_LECTURE,
-        TRANSACTION_MAJ_SENSEUR,
-        TRANSACTION_MAJ_NOEUD,
-        TRANSACTION_SUPPRESSION_SENSEUR,
-        TRANSACTION_MAJ_APPAREIL,
-        TRANSACTION_SENSEUR_HORAIRE,
-        TRANSACTION_INIT_APPAREIL,
-        TRANSACTION_APPAREIL_SUPPRIMER,
-        TRANSACTION_APPAREIL_RESTAURER,
-    ];
-    for trans in &transactions_sec {
-        rk_transactions.push(ConfigRoutingExchange {
-            routing_key: format!("transaction.{}.{}", DOMAINE_NOM, trans).into(),
-            exchange: Securite::L4Secure,
-        });
-    }
+    // let transactions_sec = vec![
+    //     TRANSACTION_LECTURE,
+    //     TRANSACTION_MAJ_SENSEUR,
+    //     TRANSACTION_MAJ_NOEUD,
+    //     TRANSACTION_SUPPRESSION_SENSEUR,
+    //     TRANSACTION_MAJ_APPAREIL,
+    //     TRANSACTION_SENSEUR_HORAIRE,
+    //     TRANSACTION_INIT_APPAREIL,
+    //     TRANSACTION_APPAREIL_SUPPRIMER,
+    //     TRANSACTION_APPAREIL_RESTAURER,
+    // ];
+    // for trans in &transactions_sec {
+    //     rk_transactions.push(ConfigRoutingExchange {
+    //         routing_key: format!("transaction.{}.{}", DOMAINE_NOM, trans).into(),
+    //         exchange: Securite::L4Secure,
+    //     });
+    // }
 
     // Queue de transactions
     queues.push(QueueType::ExchangeQueue (

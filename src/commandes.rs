@@ -21,7 +21,7 @@ use millegrilles_common_rust::mongodb::ClientSession;
 use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
 use crate::evenements::EvenementPresenceAppareilUser;
-use crate::transactions::{TransactionInitialiserAppareil, TransactionMajConfigurationUsager};
+use crate::transactions::{TransactionInitialiserAppareil, TransactionMajConfigurationUsager, TransactionShowHideSensor};
 
 pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
                                    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
@@ -67,6 +67,7 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
             // Pour l'instant, aucune autre validation. On traite comme une transaction
             Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire, &mut session).await?)
         }
+        TRANSACTION_SHOW_HIDE_SENSOR => command_show_hide_sensor(middleware, m, gestionnaire, &mut session).await,
         _ => Err(format!("senseurspassifs.consommer_commande: Commande {} inconnue : {}, message dropped", DOMAINE_NOM, action))?,
     };
 
@@ -272,6 +273,22 @@ async fn commande_maj_configuration_usager<M>(middleware: &M, m: MessageValide, 
     debug!("commande_maj_configuration_usager Consommer requete : {:?}", m.type_message);
     // Valider format de la commande
     let _commande: TransactionMajConfigurationUsager = deser_message_buffer!(m.message);
+
+    // Verifier qu'on a un certificat usager
+    if m.certificat.get_user_id()?.is_none() {
+        return Ok(Some(middleware.reponse_err(None, None, Some("user_id manquant"))?))
+    };
+
+    Ok(sauvegarder_traiter_transaction_v2(middleware, m, gestionnaire, session).await?)
+}
+
+async fn command_show_hide_sensor<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: GenerateurMessages + ValidateurX509 + MongoDao
+{
+    debug!("command_show_hide_sensor Consommer requete : {:?}", m.type_message);
+    // Valider format de la commande
+    let _commande: TransactionShowHideSensor = deser_message_buffer!(m.message);
 
     // Verifier qu'on a un certificat usager
     if m.certificat.get_user_id()?.is_none() {

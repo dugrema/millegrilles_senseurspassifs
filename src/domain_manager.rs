@@ -214,6 +214,7 @@ pub fn preparer_queues(manager: &SenseursPassifsDomainManager) -> Vec<QueueType>
         TRANSACTION_APPAREIL_SUPPRIMER,
         TRANSACTION_APPAREIL_RESTAURER,
         TRANSACTION_MAJ_CONFIGURATION_USAGER,
+        TRANSACTION_SHOW_HIDE_SENSOR,
         COMMANDE_INSCRIRE_APPAREIL,
         COMMANDE_CHALLENGE_APPAREIL,
         COMMANDE_SIGNER_APPAREIL,
@@ -255,6 +256,7 @@ pub fn preparer_queues(manager: &SenseursPassifsDomainManager) -> Vec<QueueType>
         TRANSACTION_INIT_APPAREIL,
         TRANSACTION_APPAREIL_SUPPRIMER,
         TRANSACTION_APPAREIL_RESTAURER,
+        TRANSACTION_SHOW_HIDE_SENSOR,
     ];
     for trans in &transactions_sec {
         rk_transactions.push(ConfigRoutingExchange {
