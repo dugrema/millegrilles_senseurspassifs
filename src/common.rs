@@ -265,6 +265,8 @@ pub struct ConfigurationAppareil {
     pub timezone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geoposition: Option<GeopositionAppareil>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filtres_senseurs: Option<HashMap<String,Vec<String>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

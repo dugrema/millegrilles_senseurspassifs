@@ -171,6 +171,7 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
     };
 
     let transaction_convertie: TransactionMajAppareil = serde_json::from_str(transaction.transaction.contenu.as_str())?;
+    debug!("transaction_maj_senseur Transaction convertie: {:?}", transaction_convertie);
 
     let document_transaction: DocAppareil = {
         let mut set_ops = doc! {};
@@ -183,11 +184,9 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
             set_ops.insert("configuration.cacher_senseurs", inner);
         }
         if let Some(inner) = transaction_convertie.configuration.descriptif_senseurs {
-            let bson_map = match convertir_to_bson(inner) {
-                Ok(inner) => inner,
-                Err(e) => Err(format!("senseurspassifs.transaction_maj_appareil Erreur conversion descriptif_senseurs en bson : {:?}", e))?
-            };
-            set_ops.insert("configuration.descriptif_senseurs", bson_map);
+            for (key, value) in inner {
+                set_ops.insert(format!("configuration.descriptif_senseurs.{key}"), value);
+            }
         }
         if let Some(inner) = transaction_convertie.configuration.displays {
             let bson_map = match convertir_to_bson(inner) {
@@ -216,6 +215,11 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
             set_ops.insert("configuration.geoposition", bson_map);
         } else {
             unset_ops.insert("configuration.geoposition", true);
+        }
+        if let Some(inner) = transaction_convertie.configuration.filtres_senseurs {
+            for (key, value) in inner {
+                set_ops.insert(format!("configuration.filtres_senseurs.{key}"), value);
+            }
         }
 
         let mut ops = doc! {
