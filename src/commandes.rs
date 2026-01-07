@@ -471,7 +471,7 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
                 "fingerprint": fingerprint,
             },
             "$unset": {"csr": true},
-            "$currentDate": {CHAMP_MODIFICATION: true},
+            "$currentDate": {CHAMP_MODIFICATION: true, "certificat_signature_date": true},
         };
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;

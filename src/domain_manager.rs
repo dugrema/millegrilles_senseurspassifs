@@ -24,7 +24,7 @@ use crate::common::*;
 use crate::constants::*;
 use crate::evenements::consommer_evenement;
 use crate::lectures::{generer_transactions_lectures_horaires, rebuild_sensor_list};
-use crate::maintenance::mark_devices_offline;
+use crate::maintenance::{maintain_device_certificates, mark_devices_offline};
 use crate::transactions::aiguillage_transaction;
 
 #[derive(Clone)]
@@ -134,6 +134,12 @@ impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
                 error!("traiter_cedule Error mark_devices_offline : {:?}", e);
             }
         }
+
+        // if minute == 28 {
+            if let Err(e) = maintain_device_certificates(middleware).await {
+                error!("traiter_cedule Error maintain_device_certificates : {:?}", e);
+            }
+        //}
 
         Ok(())
     }

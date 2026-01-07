@@ -1,3 +1,4 @@
+use log::debug;
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::chrono;
 use millegrilles_common_rust::chrono::Utc;
@@ -43,6 +44,33 @@ where M: GenerateurMessages + MongoDao
     let ops = doc! {
         "$unset": {"instance_id": true},
         "$set": {"connecte": false},
+        "$currentDate": {CHAMP_MODIFICATION: true},
+    };
+    collection.update_many(filtre, ops, None).await?;
+
+    Ok(())
+}
+
+/// Used to remove certificates that have been signed after a certain amount of time.
+/// Avoids making devices use expired certificates.
+pub async fn maintain_device_certificates<M>(middleware: &M) -> Result<(), Error>
+where M: GenerateurMessages + MongoDao
+{
+    debug!("Maintain device certificates");
+    let expired = Utc::now() - chrono::Duration::days(3);
+
+    let filtre = doc! {
+        "certificat_signature_date": {"$lte": expired},
+    };
+
+    let collection = middleware.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+
+    let ops = doc! {
+        "$unset": {
+            "certificat": true,
+            "fingerprint": true,
+            "certificat_signature_date": true,
+        },
         "$currentDate": {CHAMP_MODIFICATION: true},
     };
     collection.update_many(filtre, ops, None).await?;
