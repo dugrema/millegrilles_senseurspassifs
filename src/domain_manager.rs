@@ -120,6 +120,7 @@ impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
         M: MiddlewareMessages + BackupStarter + MongoDao
     {
         let minute = trigger.get_date().minute();
+        let heure = trigger.get_date().hour();
 
         // Faire l'aggretation des lectures
         // Va chercher toutes les lectures non traitees de l'heure precedente (-65 minutes)
@@ -135,11 +136,11 @@ impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
             }
         }
 
-        // if minute == 28 {
+        if minute == 28 && heure % 12 == 4 {
             if let Err(e) = maintain_device_certificates(middleware).await {
                 error!("traiter_cedule Error maintain_device_certificates : {:?}", e);
             }
-        //}
+        }
 
         Ok(())
     }
