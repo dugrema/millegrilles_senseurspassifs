@@ -206,7 +206,8 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
         if let Some(inner) = transaction_convertie.configuration.timezone {
             set_ops.insert("configuration.timezone".to_string(), inner);
         } else {
-            unset_ops.insert("configuration.timezone".to_string(), true);
+            // Cannot unset: several update transactions, like on programs or other config, does not send this info.
+            // unset_ops.insert("configuration.timezone".to_string(), true);
         }
         if let Some(inner) = transaction_convertie.configuration.geoposition {
             let bson_map = match convertir_to_bson(inner) {
@@ -215,7 +216,8 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
             };
             set_ops.insert("configuration.geoposition", bson_map);
         } else {
-            unset_ops.insert("configuration.geoposition", true);
+            // Cannot unset: several update transactions, like on programs or other config, does not send this info.
+            // unset_ops.insert("configuration.geoposition", true);
         }
         if let Some(inner) = transaction_convertie.configuration.filtres_senseurs {
             for (key, value) in inner {
