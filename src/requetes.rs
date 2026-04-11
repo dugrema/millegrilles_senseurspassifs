@@ -6,7 +6,7 @@ use millegrilles_common_rust::bson::{doc, Document};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, DateTime as ChronoDateTime, NaiveDateTime, DateTime};
+use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, DateTime as ChronoDateTime, DateTime};
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions};
@@ -633,11 +633,11 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, _
                 Some(d) => d,
                 None => Err(format!("rapport_custom custom_intervalle_min manquant"))?
             };
-            let min_date: ChronoDateTime<Utc> = ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(min_date as i64, 0), Utc);
+            let min_date: ChronoDateTime<Utc> = DateTime::from_timestamp(min_date as i64, 0).expect("timestamp null");
             // let mut intervalle_heures = doc! {"$gte": min_date.timestamp()};
             let max_date = match requete.custom_intervalle_max {
                 Some(inner) => {
-                    Some(ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(inner as i64, 0), Utc))
+                    Some(DateTime::from_timestamp(inner as i64, 0).expect("timestamp null"))
                 },
                 None => None
             };
