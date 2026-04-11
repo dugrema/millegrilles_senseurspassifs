@@ -6,11 +6,11 @@ use millegrilles_common_rust::bson::{doc, Document};
 
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, TimeZone, DateTime as ChronoDateTime, NaiveDateTime, DateTime};
+use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, DateTime as ChronoDateTime, NaiveDateTime, DateTime};
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
 use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions};
-use millegrilles_common_rust::recepteur_messages::{MessageValide, TypeMessage};
+use millegrilles_common_rust::recepteur_messages::MessageValide;
 use millegrilles_common_rust::serde_json::{json, Value};
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
@@ -163,7 +163,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionna
     where M: GenerateurMessages + MongoDao
 {
     debug!("requete_appareils_usager Consommer requete : {:?}", & m.type_message);
-    let requete: RequeteAppareilsUsager = deser_message_buffer!(m.message);
+    let _requete: RequeteAppareilsUsager = deser_message_buffer!(m.message);
 
     let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
@@ -211,7 +211,7 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionna
                     let app = ReponseAppareilUsager::from(a);
                     appareils.push(app);
                 },
-                Err(e) => {
+                Err(_e) => {
                     info!("Erreur mapping DocAppareil user_id {}", user_id);
                     continue
                 }
@@ -231,12 +231,12 @@ struct RequeteAppareilsDisplayConfiguration {
     // uuid_appareil: String,  // Extrait du certificat, comme user_id
 }
 
-async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
     debug!("requete_appareil_display_configuration Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsDisplayConfiguration = deser_message_buffer!(m.message);
+    let _requete: RequeteAppareilsDisplayConfiguration = deser_message_buffer!(m.message);
 
     // Extraire user_id, uuid_appareil du certificat
     let user_id = match m.certificat.get_user_id()? {
@@ -287,12 +287,12 @@ struct ReponseRequeteAppareilProgrammesConfiguration {
     programmes: Option<DocAppareil>,
 }
 
-async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
     debug!("requete_appareil_programmes_configuration Consommer requete : {:?}", & m.message);
-    let requete: RequeteAppareilsDisplayConfiguration = deser_message_buffer!(m.message);
+    let _requete: RequeteAppareilsDisplayConfiguration = deser_message_buffer!(m.message);
 
     // Extraire user_id, uuid_appareil du certificat
     let user_id = match m.certificat.get_user_id()? {
@@ -403,7 +403,7 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValide, ge
 
         let mut senseurs = Vec::new();
         while let Some(d) = curseur.next().await {
-            let mut noeud: InformationAppareil = convertir_bson_deserializable(d?)?;
+            let noeud: InformationAppareil = convertir_bson_deserializable(d?)?;
             senseurs.push(noeud);
         }
 
@@ -447,7 +447,7 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValide, 
         let mut senseurs = Vec::new();
         while let Some(d) = curseur.next().await {
             debug!("Document senseur bson : {:?}", d);
-            let mut noeud: InformationAppareil = convertir_bson_deserializable(d?)?;
+            let noeud: InformationAppareil = convertir_bson_deserializable(d?)?;
             senseurs.push(noeud);
         }
 
@@ -473,7 +473,7 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &S
     let requete: RequeteGetNoeud = deser_message_buffer!(m.message);
 
     let noeud = {
-        let filtre = doc! { };
+        // let filtre = doc! { };
         let projection = doc! {
             CHAMP_INSTANCE_ID: 1,
             "securite": 1,
@@ -484,7 +484,7 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &S
         let filtre = doc! { CHAMP_INSTANCE_ID: &requete.instance_id };
         let opts = FindOneOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
-        let mut doc = collection.find_one(filtre, opts).await?;
+        let doc = collection.find_one(filtre, opts).await?;
 
         match doc {
             Some(mut n) => {
@@ -498,7 +498,7 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &S
     let reponse = match noeud {
         Some(mut val_noeud) => {
             // Inserer valeurs manquantes pour la response
-            if let Some(mut o) = val_noeud.as_object_mut() {
+            if let Some(o) = val_noeud.as_object_mut() {
                 o.insert("ok".into(), Value::Bool(true));
                 o.insert("instance_id".into(), Value::String(gestionnaire.instance_id.clone()));
             }
@@ -519,17 +519,12 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &S
 struct RequeteGetAppareilsEnAttente {
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ReponseGetAppareilsEnAttente {
-    appareils: Vec<DocAppareil>,
-}
-
 async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
     debug!("requete_get_appareils_en_attente Consommer requete : {:?}", & m.message);
-    let requete: RequeteGetAppareilsEnAttente = deser_message_buffer!(m.message);
+    let _requete: RequeteGetAppareilsEnAttente = deser_message_buffer!(m.message);
 
     let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
@@ -600,7 +595,7 @@ struct ResultatStatistiquesSenseurRow {
     avg: Option<f64>,
 }
 
-async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -630,7 +625,7 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, g
 
     debug!("requete_get_statistiques_senseur Timezone {:?} - grouping {:?}", tz, requete.custom_grouping);
 
-    let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
+    // let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
 
     let reponse = match requete.custom_grouping.as_ref() {
         Some(grouping) => {
@@ -639,7 +634,7 @@ async fn requete_get_statistiques_senseur<M>(middleware: &M, m: MessageValide, g
                 None => Err(format!("rapport_custom custom_intervalle_min manquant"))?
             };
             let min_date: ChronoDateTime<Utc> = ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(min_date as i64, 0), Utc);
-            let mut intervalle_heures = doc! {"$gte": min_date.timestamp()};
+            // let mut intervalle_heures = doc! {"$gte": min_date.timestamp()};
             let max_date = match requete.custom_intervalle_max {
                 Some(inner) => {
                     Some(ChronoDateTime::from_utc(NaiveDateTime::from_timestamp(inner as i64, 0), Utc))
@@ -722,7 +717,7 @@ impl From<RowCollectionUsager> for ReponseGetConfigurationUsager {
     }
 }
 
-async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -774,7 +769,7 @@ struct ReponseGetTimezoneAppareil {
     geoposition: Option<GeopositionAppareil>,
 }
 
-async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
                                           -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {

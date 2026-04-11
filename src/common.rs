@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::collections::{BTreeMap, HashMap};
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
@@ -148,18 +150,6 @@ pub struct InformationAppareil {
     pub version: Option<String>,
 }
 
-impl<'a> InformationAppareil{
-    pub fn get_descriptif(&'a self) -> &'a str {
-        match &self.configuration {
-            Some(inner) => match &inner.descriptif {
-                Some(inner) => inner.as_str(),
-                None => self.uuid_appareil.as_str()
-            },
-            None => self.uuid_appareil.as_str()
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DocAppareil {
     pub uuid_appareil: String,
@@ -305,19 +295,4 @@ pub struct TransactionLectureHoraire {
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub avg: Option<f64>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DocumentNotificationUsager {
-    pub user_id: String,
-    pub presents: Option<Vec<String>>,
-    pub absents: Option<Vec<String>>,
-    pub cle_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NotificationAppareilUsager {
-    pub user_id: String,
-    pub uuid_appareil: String,
-    pub notification: NotificationAppareil,
 }

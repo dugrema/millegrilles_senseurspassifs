@@ -1,27 +1,27 @@
-use log::{debug, info, error};
+use log::debug;
 use millegrilles_common_rust::bson::{doc, Document};
 
-use millegrilles_common_rust::constantes::*;
-use millegrilles_common_rust::certificats::{calculer_fingerprint, charger_certificat, ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::chrono::{DateTime, Utc};
-use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable, sauvegarder_traiter_transaction_serializable_v2, sauvegarder_traiter_transaction_v2};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, MongoDao};
-use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
-use millegrilles_common_rust::recepteur_messages::{MessageValide, TypeMessage};
-use millegrilles_common_rust::serde_json::json;
-use millegrilles_common_rust::serde::{Deserialize, Serialize};
-use millegrilles_common_rust::error::Error;
-use millegrilles_common_rust::get_domaine_action;
-use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
-use millegrilles_common_rust::mongodb::ClientSession;
 use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
 use crate::evenements::EvenementPresenceAppareilUser;
 use crate::transactions::{TransactionInitialiserAppareil, TransactionMajConfigurationUsager, TransactionShowHideSensor};
+use millegrilles_common_rust::certificats::{calculer_fingerprint, charger_certificat, ValidateurX509, VerificateurPermissions};
+use millegrilles_common_rust::chrono::{DateTime, Utc};
+use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::error::Error;
+use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use millegrilles_common_rust::get_domaine_action;
+use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction_serializable_v2, sauvegarder_traiter_transaction_v2};
+use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::optionepochseconds;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, MongoDao};
+use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
+use millegrilles_common_rust::mongodb::ClientSession;
+use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
+use millegrilles_common_rust::recepteur_messages::{MessageValide, TypeMessage};
+use millegrilles_common_rust::serde::{Deserialize, Serialize};
+use millegrilles_common_rust::serde_json::json;
 
 pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
                                    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
@@ -83,12 +83,12 @@ pub async fn consommer_commande<M>(middleware: &M, m: MessageValide, gestionnair
     }
 }
 
-async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
+async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
     debug!("commande_inscrire_appareil Consommer requete : {:?}", & m.type_message);
-    let mut commande: CommandeInscrireAppareil = deser_message_buffer!(m.message);
+    let commande: CommandeInscrireAppareil = deser_message_buffer!(m.message);
 
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
     let filtre_appareil = doc! {
@@ -128,7 +128,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestion
     };
 
     // Appareil existe deja, verifier si le certificat recu est deja signe
-    let mut certificat = doc_appareil.certificat;
+    let certificat = doc_appareil.certificat;
 
     match certificat {
         Some(c) => {
@@ -169,7 +169,7 @@ async fn commande_inscrire_appareil<M>(middleware: &M, m: MessageValide, gestion
     }
 
     debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
-    certificat = None;
+    // certificat = None;
     let ops = doc! {
         "$set": {
             "cle_publique": &commande.cle_publique,
@@ -190,7 +190,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
     where M: GenerateurMessages + ValidateurX509 + MongoDao
 {
     debug!("commande_signer_appareil Consommer requete : {:?}", & m.type_message);
-    let mut commande: CommandeSignerAppareil = deser_message_buffer!(m.message);
+    let commande: CommandeSignerAppareil = deser_message_buffer!(m.message);
 
     let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
@@ -204,7 +204,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
     let mut renouvellement = false;
-    if let Some(csr) = commande.csr.as_ref() {
+    if let Some(_csr) = commande.csr.as_ref() {
         if let Some(cn) = m.certificat.subject()?.get("commonName") {
             if commande.uuid_appareil.as_str() == cn.as_str() {
                 debug!("Renouvellement d'un certificat d'appareil valide pour {}", cn);
@@ -218,7 +218,7 @@ async fn commande_signer_appareil<M>(middleware: &M, m: MessageValide, gestionna
         "user_id": &user_id,
     };
 
-    let mut doc_appareil = {
+    let doc_appareil = {
         let d = collection.find_one_with_session(filtre_appareil.clone(), None, session).await?;
         match d {
             Some(d) => {
@@ -313,12 +313,12 @@ struct CommandeSignerAppareil {
     csr: Option<String>,
 }
 
-async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
+async fn commande_challenge_appareil<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
     debug!("commande_challenge_appareil Consommer requete : {:?}", m.type_message);
-    let mut commande: CommandeChallengeAppareil = deser_message_buffer!(m.message);
+    let commande: CommandeChallengeAppareil = deser_message_buffer!(m.message);
 
     let user_id = match m.certificat.get_user_id()? {
         Some(inner) => inner,
@@ -386,10 +386,10 @@ struct CommandeConfirmerRelai {
 
 #[derive(Deserialize)]
 pub struct RowRelais {
-    pub fingerprint: String,
-    pub user_id: String,
-    #[serde(default, with="optionepochseconds")]
-    pub expiration: Option<DateTime<Utc>>,
+    // pub fingerprint: String,
+    // pub user_id: String,
+    // #[serde(default, with="optionepochseconds")]
+    // pub expiration: Option<DateTime<Utc>>,
 }
 
 async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, session: &mut ClientSession)
@@ -397,7 +397,7 @@ async fn commande_confirmer_relai<M>(middleware: &M, m: MessageValide, session: 
     where M: GenerateurMessages + MongoDao
 {
     debug ! ("commande_confirmer_relai Consommer requete : {:?}", m.type_message);
-    let mut commande: CommandeConfirmerRelai = deser_message_buffer!(m.message);
+    let commande: CommandeConfirmerRelai = deser_message_buffer!(m.message);
 
     let certificat = m.certificat.as_ref();
     let common_name = certificat.get_common_name()?;
@@ -487,12 +487,6 @@ async fn signer_certificat<M>(middleware: &M, user_id: &str, filtre_appareil: Do
 struct ReponseCertificat {
     ok: Option<bool>,
     certificat: Option<Vec<String>>,
-}
-
-#[derive(Serialize)]
-struct ReponseCommandeResetCertificat {
-    ok: bool,
-    err: Option<String>,
 }
 
 async fn commande_reset_certificats<M>(middleware: &M, m: MessageValide, session: &mut ClientSession)

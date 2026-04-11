@@ -1,27 +1,25 @@
-use std::collections::HashMap;
 use log::{debug, error, warn};
+use std::collections::HashMap;
 
-use millegrilles_common_rust::bson::doc;
-use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::{chrono, serde_json};
-use millegrilles_common_rust::base64::engine::DecodePaddingMode::RequireNone;
-use millegrilles_common_rust::chrono::{DateTime, Utc};
-use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao};
-use millegrilles_common_rust::transactions::Transaction;
-use millegrilles_common_rust::constantes::*;
-use millegrilles_common_rust::db_structs::TransactionValide;
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, FindOneOptions, Hint, InsertOneOptions, ReturnDocument, UpdateOptions, WriteConcern};
-use millegrilles_common_rust::serde_json::json;
-use millegrilles_common_rust::serde::{Deserialize, Serialize};
-use millegrilles_common_rust::error::Error;
-use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction_serializable, sauvegarder_traiter_transaction_serializable_v2};
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
-use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
-use millegrilles_common_rust::mongodb::ClientSession;
 use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
+use millegrilles_common_rust::bson::doc;
+use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
+use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
+use millegrilles_common_rust::chrono::{DateTime, Utc};
+use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::db_structs::TransactionValide;
+use millegrilles_common_rust::error::Error;
+use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use millegrilles_common_rust::middleware::sauvegarder_traiter_transaction_serializable_v2;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao};
+use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, FindOneOptions, Hint, ReturnDocument, UpdateOptions};
+use millegrilles_common_rust::mongodb::ClientSession;
+use millegrilles_common_rust::serde::{Deserialize, Serialize};
+use millegrilles_common_rust::serde_json;
+use millegrilles_common_rust::serde_json::json;
 
 pub async fn aiguillage_transaction<M>(
     gestionnaire: &SenseursPassifsDomainManager, middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
@@ -161,7 +159,7 @@ pub struct TransactionMajAppareil {
     pub configuration: ConfigurationAppareil,
 }
 
-async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
+async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionValide, _gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -176,7 +174,7 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
 
     let document_transaction: DocAppareil = {
         let mut set_ops = doc! {};
-        let mut unset_ops = doc! {};
+        let unset_ops = doc! {};
 
         if let Some(inner) = transaction_convertie.configuration.descriptif {
             set_ops.insert("configuration.descriptif", inner);
@@ -317,7 +315,7 @@ pub struct TransactionSauvegarderProgramme {
     pub supprimer: Option<bool>,
 }
 
-async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
+async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: TransactionValide, _gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: GenerateurMessages + MongoDao
 {
@@ -754,19 +752,6 @@ struct TransactionMajSenseur {
     descriptif: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     displays: Option<HashMap<String, ParametresDisplay>>
-}
-
-impl TransactionMajSenseur {
-    pub fn new<S, U>(uuid_senseur: S, uuid_noeud: U)  -> Self
-        where S: Into<String>, U: Into<String>
-    {
-        TransactionMajSenseur {
-            uuid_senseur: uuid_senseur.into(),
-            instance_id: uuid_noeud.into(),
-            descriptif: None,
-            displays: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,23 +1,21 @@
 use std::cmp::max;
 use std::collections::HashMap;
 use log::{debug, error, info, warn};
-use millegrilles_common_rust::bson::{DateTime as BsonDateTime, doc};
+use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
-use millegrilles_common_rust::{chrono, serde_json};
-use millegrilles_common_rust::chrono::{DateTime, NaiveDateTime, Timelike, Utc};
+use millegrilles_common_rust::chrono;
+use millegrilles_common_rust::chrono::{DateTime, Timelike, Utc};
 use millegrilles_common_rust::constantes::Securite;
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array, MongoDao};
-use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions, Hint, UpdateOptions};
+use millegrilles_common_rust::mongodb::options::{FindOneOptions, UpdateOptions};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::constantes::*;
-use millegrilles_common_rust::serde_json::Value;
-use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
-use millegrilles_common_rust::middleware::{sauvegarder_traiter_transaction, sauvegarder_traiter_transaction_serializable, sauvegarder_traiter_transaction_serializable_v2};
+use millegrilles_common_rust::middleware::sauvegarder_traiter_transaction_serializable_v2;
 use millegrilles_common_rust::error::Error;
 use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault, MessageValidable};
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_common_rust::recepteur_messages::MessageValide;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
 use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
@@ -150,7 +148,7 @@ impl EvenementLecture {
         };
         let collection = middleware.get_collection_typed::<RowRelais>(COLLECTIONS_RELAIS)?;
         match collection.find_one(filtre, None).await? {
-            Some(inner) => {
+            Some(_inner) => {
                 // Ok, autorise
                 Ok(LectureAppareilInfo {
                     uuid_appareil,
@@ -169,7 +167,7 @@ impl EvenementLecture {
 }
 
 
-pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, gestionnaire: &SenseursPassifsDomainManager)
+pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
     -> Result<(), Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
@@ -186,7 +184,7 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, ges
     // Trouver date de la plus recente lecture
     let derniere_lecture = lecture.calculer_derniere_lecture();
 
-    let mut filtre = doc! {
+    let filtre = doc! {
         CHAMP_UUID_APPAREIL: &lecture.uuid_appareil,
         "user_id": lecture.user_id.as_str(),
     };
@@ -474,378 +472,6 @@ fn heure_juste(date: &DateTime<Utc>) -> DateTime<Utc> {
         .with_second(0).expect("with_seconds")
         .with_nanosecond(0).expect("with_nanosecond")
 }
-
-// pub async fn detecter_presence_appareils<M>(middleware: &M) -> Result<(), Error>
-//     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
-// {
-//     {
-//         // Initialiser flag presence sur nouveaux appareils
-//         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-//         let filtre = doc! {CHAMP_PRESENT: {"$exists": false}};
-//         let ops = doc! { "$set": {CHAMP_PRESENT: true}, "$currentDate": {CHAMP_MODIFICATION: true} };
-//         collection.update_many(filtre, ops, None).await?;
-//     }
-//
-//     // Detecter appareils presents, absents
-//     detecter_changement_lectures_appareils(middleware, true).await?;
-//     detecter_changement_lectures_appareils(middleware, false).await?;
-//
-//     // Emettre notifications pending pour tous les usagers
-//     // emettre_notifications_usagers(middleware).await?;
-//
-//     Ok(())
-// }
-
-/// param present : true si detecter changement d'absent vers present, false inverse
-async fn detecter_changement_lectures_appareils<M>(middleware: &M, present: bool) -> Result<(), Error>
-    where M:  MongoDao
-{
-    // Date limite pour detecter presence : < est absent, > est present
-    let date_limite = Utc::now() - chrono::Duration::seconds(CONST_APAREIL_LECTURE_TIMEOUT_SECS);
-
-    let filtre = match present {
-        true => doc! {
-            // Detecter appareils qui etaient absents et sont maintenant presents
-            CHAMP_DERNIERE_LECTURE: { "$gte": date_limite },
-            CHAMP_PRESENT: false,
-        },
-        false => doc! {
-            // Detecter appareils qui etaient presents et sont maintenant absents
-            CHAMP_DERNIERE_LECTURE: { "$lt": date_limite },
-            CHAMP_PRESENT: true,
-        }
-    };
-
-    let options = FindOptions::builder().hint(Hint::Name(INDEX_APPAREILS_DERNIERE_LECTURE.to_string())).build();
-    let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    let mut curseur = collection.find(filtre, Some(options)).await?;
-    while let Some(r) = curseur.next().await {
-        let appareil: InformationAppareil = convertir_bson_deserializable(r?)?;
-        debug!("detecter_changement_lectures_appareils Appareil changement presence : {:?}", appareil.uuid_appareil);
-
-        // Mettre a jour l'appareil dans la base de donnees
-        let filtre = doc!{
-            CHAMP_USER_ID: &appareil.user_id,
-            CHAMP_UUID_APPAREIL: &appareil.uuid_appareil
-        };
-        let mut ops = doc! {
-            "$set": {
-                CHAMP_PRESENT: present,
-            },
-            "$currentDate": { CHAMP_MODIFICATION: true }
-        };
-        // Retirer le champ connecte (on n'a aucune information)
-        if ! present {
-            ops.insert("$unset", doc!{CHAMP_CONNECTE: true});
-        }
-        collection.update_one(filtre, ops, None).await?;
-
-        // Ajouter entree de notification pour l'usager
-        ajouter_notification_appareil(middleware, &appareil, present).await?;
-    }
-
-    Ok(())
-}
-
-async fn ajouter_notification_appareil<M>(middleware: &M, appareil: &InformationAppareil, present: bool) -> Result<(), Error>
-    where M: MongoDao
-{
-    let (champ_present, champ_inverse) = match present {
-        true => ("presents", "absents"),
-        false => ("absents", "presents")
-    };
-    let ops = doc! {
-        "$setOnInsert": {
-            CHAMP_USER_ID: &appareil.user_id,
-            CHAMP_CREATION: Utc::now(),
-        },
-        "$addToSet": { champ_present: &appareil.uuid_appareil },
-        "$pull": { champ_inverse: &appareil.uuid_appareil },
-        "$set": { CHAMP_DIRTY: true },
-        "$currentDate": { CHAMP_MODIFICATION: true }
-    };
-    let filtre = doc! { CHAMP_USER_ID: &appareil.user_id };
-    let options = UpdateOptions::builder().upsert(true).build();
-
-    let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-    collection.update_one(filtre, ops, options).await?;
-
-    Ok(())
-}
-
-
-// async fn emettre_notifications_usagers<M>(middleware: &M) -> Result<(), Error>
-//     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
-// {
-//     let filtre = doc!{
-//         CHAMP_DIRTY: true,
-//     };
-//     let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-//     let mut curseur = collection.find(filtre, None).await?;
-//     while let Some(r) = curseur.next().await {
-//         let doc_usager: DocumentNotificationUsager = convertir_bson_deserializable(r?)?;
-//
-//         // Reset flag usager
-//         let filtre = doc! { CHAMP_USER_ID: &doc_usager.user_id };
-//         let ops = doc! {
-//             "$set": {CHAMP_DIRTY: false},
-//             "$unset": {CHAMP_PRESENTS: true, CHAMP_ABSENTS: true},
-//             "$currentDate": {CHAMP_MODIFICATION: true},
-//         };
-//         collection.update_one(filtre, ops, None).await?;
-//
-//         // Preparer et emettre la notification
-//         emettre_notification_usager(middleware, &doc_usager).await?;
-//     }
-//
-//     Ok(())
-// }
-
-// async fn emettre_notification_usager<M>(middleware: &M, doc_usager: &DocumentNotificationUsager) -> Result<(), Error>
-//     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
-// {
-//     let now = Utc::now();
-//
-//     let mut uuid_appareils = Vec::new();
-//
-//     let nombre_presents = match doc_usager.presents.as_ref() {
-//         Some(inner) => {
-//             for app in inner {
-//                 uuid_appareils.push(app.as_str());
-//             }
-//             inner.len()
-//         },
-//         None => 0
-//     };
-//     let nombre_absents = match doc_usager.absents.as_ref() {
-//         Some(inner) => {
-//             for app in inner {
-//                 uuid_appareils.push(app.as_str());
-//             }
-//             inner.len()
-//         },
-//         None => 0
-//     };
-//
-//     let mut map_appareils = HashMap::new();
-//     let filtre = doc! {
-//         CHAMP_USER_ID: &doc_usager.user_id,
-//         CHAMP_UUID_APPAREIL: {"$in": uuid_appareils}
-//     };
-//     debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
-//     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-//     let mut curseur = collection.find(filtre, None).await?;
-//     while let Some(r) = curseur.next().await {
-//         let app: InformationAppareil = convertir_bson_deserializable(r?)?;
-//         debug!("emettre_notification_usager Appareil charge : {:?}", app);
-//         map_appareils.insert(app.uuid_appareil.to_owned(), app);
-//     }
-//
-//     let sujet = format!("Notifications pour {} appareils ({} avec contact perdu)", nombre_presents+nombre_absents, nombre_absents);
-//
-//     let mut contenu = String::new();
-//     if let Some(appareils) = doc_usager.presents.as_ref() {
-//         contenu.push_str("<h2>Appareils reconnectes</h2><br/>\n");
-//         for app in appareils {
-//             let ligne = match map_appareils.get(app) {
-//                 Some(inner) => {
-//                     match inner.configuration.as_ref() {
-//                         Some(config) => match config.descriptif.as_ref() {
-//                             Some(descriptif) =>  format!("{}<br/>", descriptif),
-//                             None => format!("{}<br/>", app.as_str())
-//                         },
-//                         None => format!("{}<br/>", app.as_str())
-//                     }
-//                 },
-//                 None => format!("{}<br/>", app.as_str())
-//             };
-//             contenu.push_str(ligne.as_str());
-//         }
-//         contenu.push_str("<br/>\n")
-//     }
-//
-//     if let Some(appareils) = doc_usager.absents.as_ref() {
-//         contenu.push_str("<h2>Appareils deconnectes</h2><br/>\n");
-//         for app in appareils {
-//             let ligne = match map_appareils.get(app) {
-//                 Some(inner) => {
-//                     match inner.configuration.as_ref() {
-//                         Some(config) => match config.descriptif.as_ref() {
-//                             Some(descriptif) =>  format!("{} (derniere lecture : {:?})<br/>", descriptif, inner.derniere_lecture),
-//                             None => format!("{}<br/>", app.as_str())
-//                         },
-//                         None => format!("{}<br/>", app.as_str())
-//                     }
-//                 },
-//                 None => format!("{}<br/>", app.as_str())
-//             };
-//             contenu.push_str(ligne.as_str());
-//         }
-//         contenu.push_str("</br/>\n")
-//     }
-//
-//     // Charger cle notifications usager - creer nouvelle cle au besoin
-//     let cle_usager = match doc_usager.cle_id.as_ref() {
-//         Some(cle_id) => {
-//             debug!("Charger cle_id {}", cle_id);
-//             let mut cles_dechiffrees = get_cles_dechiffrees(
-//                 middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await?;
-//             match cles_dechiffrees.remove(cle_id) {
-//                 Some(inner) => Some(inner),
-//                 None => {
-//                     warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", doc_usager.user_id);
-//                     None
-//                 }
-//             }
-//         },
-//         None => {
-//             debug!("Generer nouvelle cle de notification pour usager {}", doc_usager.user_id);
-//             None
-//         }
-//     };
-//
-//     let notification = NotificationMessageInterne {
-//         from: "SenseursPassifs".to_string(),
-//         subject: Some(sujet),
-//         content: contenu,
-//         version: 1,
-//         format: "html".to_string(),
-//     };
-//
-//     debug!("Emettre notification usager : {:?}", notification);
-//
-//     let cle_id = middleware.emettre_notification_usager(
-//         doc_usager.user_id.as_str(), notification,
-//         "info",
-//         DOMAINE_NOM,
-//         Some(now.timestamp() + 3 * 86400),
-//         cle_usager
-//     ).await?;
-//
-//     if doc_usager.cle_id.is_none() {
-//         debug!("Conserver cle_id {} pour usager {}", cle_id, doc_usager.user_id);
-//         let filtre = doc! { CHAMP_USER_ID: &doc_usager.user_id };
-//         let ops = doc! {
-//             "$set": { "cle_id": &cle_id },
-//             "$currentDate": { CHAMP_MODIFICATION: true }
-//         };
-//         let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-//         collection.update_one(filtre, ops, None).await?;
-//     }
-//
-//     Ok(())
-// }
-
-// async fn emettre_notification_appareil_usager<M>(middleware: &M, notification_appareil: NotificationAppareilUsager) -> Result<(), Error>
-//     where M: GenerateurMessages + MongoDao + EmetteurNotificationsTrait
-// {
-//     let now = Utc::now();
-//
-//     let doc_usager: Option<DocumentNotificationUsager> = {
-//         let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-//         let filtre = doc!("user_id": &notification_appareil.user_id);
-//         let doc_usager = collection.find_one(filtre, None).await?;
-//         match doc_usager {
-//             Some(inner) => {
-//                 let du: DocumentNotificationUsager = convertir_bson_deserializable(inner)?;
-//                 Some(du)
-//             },
-//             None => None
-//         }
-//     };
-//
-//     let filtre = doc! {
-//         CHAMP_USER_ID: &notification_appareil.user_id,
-//         CHAMP_UUID_APPAREIL: &notification_appareil.uuid_appareil,
-//     };
-//     debug!("emettre_notification_usager Filtre chargement appareils : {:?}", filtre);
-//     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-//     let doc_appareil: InformationAppareil = match collection.find_one(filtre, None).await? {
-//         Some(doc_appareil) => convertir_bson_deserializable(doc_appareil)?,
-//         None => Err(format!("lectures.emettre_notification_appareil_usager Appareil {} inconnu", notification_appareil.uuid_appareil))?
-//     };
-//
-//     let descriptif_appareil = doc_appareil.get_descriptif();
-//
-//     let sujet = format!("Notification pour {}", descriptif_appareil);
-//
-//     let mut contenu = String::new();
-//     contenu.push_str("<h2>Notification</h2><br/>\n");
-//     match notification_appareil.notification.message {
-//         Some(message) => {
-//             contenu.push_str(format!("<p>{}</p><br/>\n", message).as_str());
-//         },
-//         None => {
-//             contenu.push_str("<p>Aucun message.</p>\n")
-//         }
-//     }
-//     contenu.push_str("<br/>\n");
-//
-//     // Charger cle notifications usager - creer nouvelle cle au besoin
-//     let cle_usager = match &doc_usager {
-//         Some(d) => {
-//             match &d.cle_id {
-//                 Some(cle_id) => {
-//                     charger_cle_notification_usager(
-//                         middleware, cle_id.as_ref(), notification_appareil.user_id.as_str()).await?
-//                 },
-//                 None => None,
-//             }
-//         },
-//         None => None
-//     };
-//
-//     let notification = NotificationMessageInterne {
-//         from: "SenseursPassifs".to_string(),
-//         subject: Some(sujet),
-//         content: contenu,
-//         version: 1,
-//         format: "html".to_string(),
-//     };
-//
-//     debug!("Emettre notification appareil usager : {:?}", notification);
-//
-//     let cle_presente = cle_usager.is_some();
-//
-//     let cle_id = middleware.emettre_notification_usager(
-//         notification_appareil.user_id.as_str(), notification,
-//         "info",
-//         DOMAINE_NOM,
-//         Some(now.timestamp() + 3 * 86400),
-//         cle_usager
-//     ).await?;
-//
-//     if cle_presente == false {
-//         debug!("Conserver cle_id {} pour usager {}", cle_id, notification_appareil.user_id);
-//         let filtre = doc! { CHAMP_USER_ID: &notification_appareil.user_id };
-//         let ops = doc! {
-//             "$set": { "cle_id": &cle_id },
-//             "$currentDate": { CHAMP_MODIFICATION: true }
-//         };
-//         let collection = middleware.get_collection(COLLECTIONS_NOTIFICATIONS_USAGERS)?;
-//         collection.update_one(filtre, ops, None).await?;
-//     }
-//
-//     Ok(())
-// }
-
-// async fn charger_cle_notification_usager<M>(middleware: &M, cle_id: &str, user_id: &str)
-//     -> Result<Option<CleDechiffree>, Error>
-//     where M: GenerateurMessages
-// {
-//     debug!("charger_cle_notification_usager Charger cle_id {}", cle_id);
-//     let mut cles_dechiffrees = match get_cles_dechiffrees(middleware, vec![cle_id.clone()], Some(DOMAINE_NOM)).await {
-//         Ok(inner) => inner,
-//         Err(e) => Err(format!("lectures.charger_cle_notification_usager Erreur get_cles_dechiffrees : {:?}", e))?
-//     };
-//     match cles_dechiffrees.remove(cle_id) {
-//         Some(inner) => Ok(Some(inner)),
-//         None => {
-//             warn!("Erreur reception cle dechiffrage notifications usager : {}, creer nouvelle cle", user_id);
-//             Ok(None)
-//         }
-//     }
-// }
 
 #[derive(Debug, Deserialize)]
 struct DeviceHourAggregateId {
