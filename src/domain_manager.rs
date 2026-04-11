@@ -1,5 +1,13 @@
-use log::{debug, error};
-use millegrilles_common_rust::error::Error as CommonError;
+use crate::builder::preparer_index_mongodb;
+use crate::commandes::consommer_commande;
+use crate::common::*;
+use crate::constants::*;
+use crate::evenements::consommer_evenement;
+use crate::lectures::{generer_transactions_lectures_horaires, rebuild_sensor_list};
+use crate::maintenance::{maintain_device_certificates, mark_devices_offline};
+use crate::requetes::consommer_requete;
+use crate::transactions::aiguillage_transaction;
+use log::error;
 use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::backup::BackupStarter;
 use millegrilles_common_rust::certificats::ValidateurX509;
@@ -9,23 +17,15 @@ use millegrilles_common_rust::constantes::{Securite, DEFAULT_Q_TTL};
 use millegrilles_common_rust::db_structs::TransactionValide;
 use millegrilles_common_rust::domaines_traits::{AiguillageTransactions, ConsommateurMessagesBus, GestionnaireBusMillegrilles, GestionnaireDomaineV2};
 use millegrilles_common_rust::domaines_v2::{prepare_mongodb_domain_indexes, GestionnaireDomaineSimple};
+use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::mongo_dao::{start_transaction_regular, MongoDao};
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{Middleware, MiddlewareMessages};
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use millegrilles_common_rust::mongo_dao::{start_transaction_regular, MongoDao};
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::MessageValide;
-use crate::builder::preparer_index_mongodb;
-use crate::commandes::consommer_commande;
-use crate::requetes::consommer_requete;
-use crate::common::*;
-use crate::constants::*;
-use crate::evenements::consommer_evenement;
-use crate::lectures::{generer_transactions_lectures_horaires, rebuild_sensor_list};
-use crate::maintenance::{maintain_device_certificates, mark_devices_offline};
-use crate::transactions::aiguillage_transaction;
 
 #[derive(Clone)]
 pub struct SenseursPassifsDomainManager {
