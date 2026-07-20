@@ -1,5 +1,3 @@
-// mod domaines_senseurspassifs;
-// mod senseurspassifs;
 mod requetes;
 mod common;
 mod lectures;
