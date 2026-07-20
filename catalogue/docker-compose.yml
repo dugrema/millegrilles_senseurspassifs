@@ -19,12 +19,15 @@ services:
         - SenseursPassifs
       split: true
     environment:
+      - INSTANCE_ID=${INSTANCE_ID}
       - MG_MQ_HOST=${MQ_HOSTNAME:-mq}
       - MG_MQ_PORT=${MQ_PORT:-5673}
       - MG_MONGO_HOST=mongo
       - CERTFILE=/run/secrets/cert.pem
       - KEYFILE=/run/secrets/key.pem
       - CAFILE=/run/secrets/millegrille.pem
+      - MG_REDIS_URL=rediss://client_rust@redis:6379#insecure
+      - MG_REDIS_PASSWORD_FILE=/run/secrets/passwd.redis.txt
       - RUST_LOG=warn
     volumes:
       - ${MILLEGRILLES_ROOT}/var/backup/domains:/var/opt/millegrilles/archives
@@ -46,7 +49,7 @@ services:
       - source: senseurspassifs_backend
         target: key.pem
       - source: passwd_redis
-        target: redis.txt
+        target: passwd.redis.txt
     networks:
       - app_net
 
