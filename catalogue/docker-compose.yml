@@ -19,8 +19,8 @@ services:
         - SenseursPassifs
       split: true
     environment:
-      - MG_MQ_HOST=${MQ_HOSTNAME}
-      - MG_MQ_PORT=${MQ_PORT}
+      - MG_MQ_HOST=${MQ_HOSTNAME:-mq}
+      - MG_MQ_PORT=${MQ_PORT:-5673}
       - MG_MONGO_HOST=mongo
       - CERTFILE=/run/secrets/cert.pem
       - KEYFILE=/run/secrets/key.pem
