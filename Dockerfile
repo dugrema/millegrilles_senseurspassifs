@@ -17,7 +17,8 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && \
     echo "fn main() {println!(\"dummy project\");}" > src/main.rs && \
     cargo build --release && \
-    rm -rf src
+    rm -rf src && \
+    rm target/release/millegrilles_senseurspassifs
 
 # Copy source code and build the actual application
 COPY . .
