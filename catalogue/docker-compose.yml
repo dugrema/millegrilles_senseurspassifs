@@ -1,0 +1,63 @@
+include:
+  - path: ../include/app_net.yml
+    project_directory: .
+
+name: ${INSTANCE_NAME}
+
+services:
+  senseurspassifs_backend:
+    image: "replace_me"
+    x-millegrilles-certificat:
+      roles:
+        - senseurspassifs
+      exchanges:
+        - 4.secure
+        - 3.protege
+        - 2.prive
+        - 1.public
+      domaines:
+        - SenseursPassifs
+      split: true
+    environment:
+      - MG_MQ_HOST=${MQ_HOSTNAME}
+      - MG_MQ_PORT=${MQ_PORT}
+      - MG_MONGO_HOST=mongo
+      - CERTFILE=/run/secrets/cert.pem
+      - KEYFILE=/run/secrets/key.pem
+      - CAFILE=/run/secrets/millegrille.pem
+      - RUST_LOG=warn
+    volumes:
+      - ${MILLEGRILLES_ROOT}/var/backup/domains:/var/opt/millegrilles/archives
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 250M
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 1000
+    configs:
+      - source: senseurspassifs_backend
+        target: /run/secrets/cert.pem
+      - source: mgca
+        target: /run/secrets/millegrille.pem
+    secrets:
+      - source: senseurspassifs_backend
+        target: key.pem
+      - source: passwd_redis
+        target: redis.txt
+    networks:
+      - app_net
+
+configs:
+  senseurspassifs_backend:
+    file: ${MILLEGRILLES_ROOT}/secrets/senseurspassifs_backend.cert.pem
+  mgca:
+    file: ${MILLEGRILLES_ROOT}/etc/millegrille.pem
+
+secrets:
+  senseurspassifs_backend:
+    file: ${MILLEGRILLES_ROOT}/secrets/senseurspassifs_backend.key.pem
+  passwd_redis:
+    file: ${MILLEGRILLES_ROOT}/secrets/redis.txt

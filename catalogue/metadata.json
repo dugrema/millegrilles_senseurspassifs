@@ -1,0 +1,8 @@
+{
+  "name": "senseurspassifs_backend",
+  "version": "BUILD",
+  "labels": {
+    "en": "MilleGrilles sensors and switches backend",
+    "fr": "SenseursPassifs pour MilleGrilles"
+  }
+}
