@@ -246,7 +246,7 @@ pub fn preparer_queues(manager: &SenseursPassifsDomainManager) -> Vec<QueueType>
             nom_queue: manager.get_q_volatils(),
             routing_keys: rk_volatils,
             ttl: DEFAULT_Q_TTL.into(),
-            durable: false,
+            durable: true,
             autodelete: false,
         }
     ));

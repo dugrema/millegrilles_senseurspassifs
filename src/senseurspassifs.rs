@@ -191,7 +191,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
             nom_queue: gestionnaire.get_q_volatils().expect("get_q_volatils OK").expect("get_q_volatils Some").into(),
             routing_keys: rk_volatils,
             ttl: DEFAULT_Q_TTL.into(),
-            durable: false,
+            durable: true,
             autodelete: false,
         }
     ));
@@ -222,7 +222,7 @@ pub fn preparer_queues(gestionnaire: &GestionnaireSenseursPassifs) -> Vec<QueueT
             nom_queue: gestionnaire.get_q_transactions().expect("get_q_transactions Ok").expect("get_q_transactions Some").into(),
             routing_keys: rk_transactions,
             ttl: None,
-            durable: false,
+            durable: true,
             autodelete: false,
         }
     ));
