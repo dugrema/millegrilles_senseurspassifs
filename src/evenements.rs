@@ -4,7 +4,7 @@ use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::error::Error;
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::MongoDao;
+use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 
 use crate::common::*;
@@ -21,7 +21,7 @@ use millegrilles_common_rust::recepteur_messages::MessageValide;
 
 pub async fn consommer_evenement<M>(middleware: &M, gestionnaire: &SenseursPassifsDomainManager, m: MessageValide)
                                     -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
-where M: ValidateurX509 + GenerateurMessages + MongoDao
+where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
 {
     debug!("senseurspassifs.consommer_evenement Consommer evenement : {:?}", &m.type_message);
 
@@ -109,7 +109,7 @@ pub async fn evenement_appareil_presence<M>(middleware: &M, m: &MessageValide) -
         "$currentDate": {CHAMP_MODIFICATION: true, CHAMP_MAJ_CONNEXION: true}
     };
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    collection.update_one(filtre, ops, None).await?;
+    collection.update_one(filtre, ops).await?;
 
     // Re-emettre l'evenement pour le userId
     {

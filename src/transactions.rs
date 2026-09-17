@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
+use millegrilles_common_rust::bson::serde_helpers::datetime::FromChrono04DateTime;
 use millegrilles_common_rust::bson::doc;
-use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::constantes::*;
@@ -14,8 +14,8 @@ use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageM
 use millegrilles_common_rust::middleware::sauvegarder_traiter_transaction_serializable_v2;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao};
-use millegrilles_common_rust::mongodb::options::{FindOneAndUpdateOptions, FindOneOptions, Hint, ReturnDocument, UpdateOptions};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, filtrer_doc_id, MongoDao, MongoDaoTyped};
+use millegrilles_common_rust::mongodb::options::{Hint, ReturnDocument};
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::serde_json;
@@ -24,7 +24,7 @@ use millegrilles_common_rust::serde_json::json;
 pub async fn aiguillage_transaction<M>(
     gestionnaire: &SenseursPassifsDomainManager, middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
 {
     let action = match transaction.transaction.routage.as_ref() {
         Some(inner) => match inner.action.as_ref() {
@@ -59,7 +59,7 @@ pub async fn aiguillage_transaction<M>(
 async fn transaction_maj_senseur<M>(
     middleware: &M, transaction: TransactionValide, gestionnaire: &SenseursPassifsDomainManager, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
 {
     debug!("transaction_maj_senseur Consommer transaction : {:?}", &transaction.transaction.id);
     let transaction_cle: TransactionMajSenseur = serde_json::from_str(transaction.transaction.contenu.as_str())?;
@@ -92,8 +92,13 @@ async fn transaction_maj_senseur<M>(
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
         let filtre = doc! { CHAMP_UUID_SENSEUR: &transaction_cle.uuid_senseur, CHAMP_USER_ID: &user_id };
-        let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
-        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
+        // let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
+        match collection.find_one_and_update(filtre, ops)
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .session(&mut *session)
+            .await
+        {
             Ok(r) => match r {
                 Some(r) => match convertir_bson_deserializable::<TransactionMajSenseur>(r) {
                     Ok(r) => r,
@@ -116,12 +121,12 @@ async fn transaction_maj_senseur<M>(
             },
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
-        let opts = UpdateOptions::builder().upsert(true).build();
+        // let opts = UpdateOptions::builder().upsert(true).build();
         let collection_noeud = match middleware.get_collection(COLLECTIONS_INSTANCES) {
             Ok(n) => n,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur ouverture collection noeuds: {:?}", e))?
         };
-        let resultat = match collection_noeud.update_one_with_session(filtre, ops, Some(opts), session).await {
+        let resultat = match collection_noeud.update_one(filtre, ops).upsert(true).session(&mut *session).await {
             Ok(r) => r,
             Err(e) => Err(format!("senseurspassifs.transaction_maj_senseur Erreur traitement maj noeud : {:?}", e))?
         };
@@ -135,7 +140,7 @@ async fn transaction_maj_senseur<M>(
             //     .blocking(false)
             //     .build();
             if let Err(e) = sauvegarder_traiter_transaction_serializable_v2(
-                middleware, &transaction, gestionnaire, session, DOMAINE_NOM, TRANSACTION_MAJ_NOEUD).await
+                middleware, &transaction, gestionnaire, &mut *session, DOMAINE_NOM, TRANSACTION_MAJ_NOEUD).await
             {
                 error!("senseurspassifs.transaction_maj_senseur Erreur sauvegarder_traiter_transaction_serializable pour instance_id {} : {:?}", transaction_cle.instance_id, e);
             }
@@ -237,13 +242,19 @@ async fn transaction_maj_appareil<M>(middleware: &M, transaction: TransactionVal
         }
 
         let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil, CHAMP_USER_ID: &user_id };
-        let opts = FindOneAndUpdateOptions::builder()
-            .upsert(true)
-            .return_document(ReturnDocument::After)
-            .build();
+        // let opts = FindOneAndUpdateOptions::builder()
+        //     .upsert(true)
+        //     .return_document(ReturnDocument::After)
+        //     .build();
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
+        match collection
+            .find_one_and_update(filtre, ops)
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .session(&mut *session)
+            .await
+        {
             Ok(r) => match r {
                 Some(r) => match convertir_bson_deserializable(r) {
                     Ok(r) => r,
@@ -359,13 +370,18 @@ async fn transaction_sauvegarder_programme<M>(middleware: &M, transaction: Trans
         }
 
         let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil, CHAMP_USER_ID: &user_id };
-        let opts = FindOneAndUpdateOptions::builder()
-            .upsert(true)
-            .return_document(ReturnDocument::After)
-            .build();
+        // let opts = FindOneAndUpdateOptions::builder()
+        //     .upsert(true)
+        //     .return_document(ReturnDocument::After)
+        //     .build();
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
+        match collection
+            .find_one_and_update(filtre, ops)
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .session(&mut *session)
+            .await {
             Ok(r) => match r {
                 Some(r) => match convertir_bson_deserializable(r) {
                     Ok(r) => r,
@@ -431,8 +447,12 @@ async fn transaction_initialiser_appareil<M>(middleware: &M, transaction: Transa
         },
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
-    let options = UpdateOptions::builder().upsert(true).build();
-    if let Err(e) = collection.update_one_with_session(filtre, ops, options, session).await {
+    // let options = UpdateOptions::builder().upsert(true).build();
+    if let Err(e) = collection
+        .update_one(filtre, ops)
+        .upsert(true)
+        .session(&mut *session)
+        .await {
         Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
     }
 
@@ -462,8 +482,13 @@ async fn transaction_appareil_supprimer<M>(middleware: &M, transaction: Transact
         "$set": { CHAMP_SUPPRIME: true },
         "$currentDate": { CHAMP_MODIFICATION: true }
     };
-    let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
-    let doc_appareil = match collection.find_one_and_update_with_session(filtre, ops, options, session).await {
+    // let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
+    let doc_appareil = match collection
+        .find_one_and_update(filtre, ops)
+        .return_document(ReturnDocument::After)
+        .session(&mut *session)
+        .await
+    {
         Ok(inner) => match inner {
             Some(inner) => {
                 let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {
@@ -505,8 +530,13 @@ async fn transaction_appareil_restaurer<M>(middleware: &M, transaction: Transact
         "$set": { CHAMP_SUPPRIME: false },
         "$currentDate": { CHAMP_MODIFICATION: true }
     };
-    let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
-    let doc_appareil = match collection.find_one_and_update_with_session(filtre, ops, options, session).await {
+    // let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
+    let doc_appareil = match collection
+        .find_one_and_update(filtre, ops)
+        .return_document(ReturnDocument::After)
+        .session(&mut *session)
+        .await
+    {
         Ok(inner) => match inner {
             Some(inner) => {
                 let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {
@@ -559,8 +589,14 @@ async fn transaction_maj_noeud<M>(middleware: &M, transaction: TransactionValide
 
         let filtre = doc! { CHAMP_INSTANCE_ID: &contenu_transaction.instance_id };
         let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
-        let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
-        match collection.find_one_and_update_with_session(filtre, ops, Some(opts), session).await {
+        // let opts = FindOneAndUpdateOptions::builder().upsert(true).return_document(ReturnDocument::After).build();
+        match collection
+            .find_one_and_update(filtre, ops)
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .session(&mut *session)
+            .await
+        {
             Ok(r) => {
                 match r {
                     Some(r) => {
@@ -598,7 +634,11 @@ async fn transaction_suppression_senseur<M>(middleware: &M, transaction: Transac
     {
         let filtre = doc! { CHAMP_UUID_SENSEUR: &contenu_transaction.uuid_senseur };
         let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-        let resultat = match collection.delete_one_with_session(filtre, None, session).await {
+        let resultat = match collection
+            .delete_one(filtre)
+            .session(&mut *session)
+            .await
+        {
             Ok(r) => r,
             Err(e) => Err(format!("senseurspassifs.transaction_suppression_senseur Erreur traitement transaction senseur : {:?}", e))?
         };
@@ -646,8 +686,13 @@ async fn transaction_lectures<M>(middleware: &M, transaction: TransactionValide,
                 },
                 "$currentDate": { CHAMP_MODIFICATION: true },
             };
-            let opts = UpdateOptions::builder().upsert(true).build();
-            let resultat = match collection.update_one_with_session(filtre, ops, Some(opts), session).await {
+            // let opts = UpdateOptions::builder().upsert(true).build();
+            let resultat = match collection
+                .update_one(filtre, ops)
+                .upsert(true)
+                .session(&mut *session)
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => Err(format!("senseurspassifs.transaction_lectures Erreur traitement transaction senseur : {:?}", e))?
             };
@@ -756,12 +801,12 @@ struct TransactionMajSenseur {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SenseurHoraireRow {
-    #[serde(rename="_mg-creation", with="chrono_datetime_as_bson_datetime")]
+    #[serde(rename="_mg-creation", with="FromChrono04DateTime")]
     pub creation: DateTime<Utc>,
     pub user_id: String,
     pub uuid_appareil: String,
     pub senseur_id: String,
-    #[serde(with="chrono_datetime_as_bson_datetime")]
+    #[serde(with="FromChrono04DateTime")]
     pub heure: DateTime<Utc>,
     #[serde(rename="type")]
     pub type_: Option<String>,
@@ -794,7 +839,7 @@ impl From<&TransactionLectureHoraire> for SenseurHoraireRow {
 
 async fn transaction_senseur_horaire<M>(middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: GenerateurMessages + MongoDao
+    where M: GenerateurMessages + MongoDaoTyped
 {
     debug!("transaction_senseur_horaire Consommer transaction : {:?}", transaction.transaction.id);
     let transaction_convertie: TransactionLectureHoraire = serde_json::from_str(transaction.transaction.contenu.as_str())?;
@@ -810,14 +855,22 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
             "senseur_id": &transaction_convertie.senseur_id,
             "heure": &transaction_convertie.heure
         };
-        let options = FindOneOptions::builder().hint(Hint::Name("lectures_horaire".to_string())).build();
-        if collection.find_one_with_session(filtre, options, session).await?.is_some() {
+        // let options = FindOneOptions::builder().hint(Hint::Name("lectures_horaire".to_string())).build();
+        if collection
+            .find_one(filtre)
+            .hint(Hint::Name("lectures_horaire".to_string()))
+            .session(&mut *session)
+            .await?.is_some()
+        {
             warn!("transaction_senseur_horaire Ignoring duplicate transaction: {} on rebuild", transaction.transaction.id);
             return Ok(None);
         }
     }
 
-    collection.insert_one_with_session(&senseur_horaire_row, None, session).await?;
+    collection
+        .insert_one(&senseur_horaire_row)
+        .session(&mut *session)
+        .await?;
 
     // Other approach - pre-commit (slow)
     // if middleware.get_mode_regeneration() == true {
@@ -871,8 +924,13 @@ async fn transaction_senseur_horaire<M>(middleware: &M, transaction: Transaction
             });
         }
 
-        let options = UpdateOptions::builder().upsert(true).build();
-        if let Err(e) = collection.update_one_with_session(filtre, ops, options, session).await {
+        // let options = UpdateOptions::builder().upsert(true).build();
+        if let Err(e) = collection
+            .update_one(filtre, ops)
+            .upsert(true)
+            .session(&mut *session)
+            .await
+        {
             Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
         }
     }
@@ -913,8 +971,13 @@ async fn transaction_maj_configuration_usager<M>(middleware: &M, transaction: Tr
         },
         "$currentDate": {CHAMP_MODIFICATION: true}
     };
-    let options = UpdateOptions::builder().upsert(true).build();
-    if let Err(e) = collection.update_one_with_session(filtre, ops, options, session).await {
+    // let options = UpdateOptions::builder().upsert(true).build();
+    if let Err(e) = collection
+        .update_one(filtre, ops)
+        .upsert(true)
+        .session(&mut *session)
+        .await
+    {
         Err(format!("senseurspassifs.transaction_maj_configuration_usager Erreur maj configuration : {:?}", e))?
     }
 
@@ -959,8 +1022,13 @@ where M: GenerateurMessages + MongoDao
         ops.insert("$pull", doc!{"configuration.cacher_senseurs": contenu_transaction.senseur_id});
     }
 
-    let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
-    let doc_appareil = match collection.find_one_and_update_with_session(filtre, ops, options, session).await {
+    // let options = FindOneAndUpdateOptions::builder().return_document(ReturnDocument::After).build();
+    let doc_appareil = match collection
+        .find_one_and_update(filtre, ops)
+        .return_document(ReturnDocument::After)
+        .session(&mut *session)
+        .await
+    {
         Ok(inner) => match inner {
             Some(inner) => {
                 let doc_appareil: DocAppareil = match convertir_bson_deserializable(inner) {

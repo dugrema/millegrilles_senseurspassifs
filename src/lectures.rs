@@ -1,28 +1,27 @@
-use std::cmp::max;
-use std::collections::HashMap;
 use log::{debug, error, info, warn};
 use millegrilles_common_rust::bson::doc;
+use millegrilles_common_rust::bson::serde_helpers::datetime::FromChrono04DateTime;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::chrono;
 use millegrilles_common_rust::chrono::{DateTime, Timelike, Utc};
 use millegrilles_common_rust::constantes::Securite;
-use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array, MongoDao};
-use millegrilles_common_rust::mongodb::options::{FindOneOptions, UpdateOptions};
-use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::error::Error;
+use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
 use millegrilles_common_rust::middleware::sauvegarder_traiter_transaction_serializable_v2;
-use millegrilles_common_rust::error::Error;
 use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageValidable};
-use millegrilles_common_rust::recepteur_messages::MessageValide;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::epochseconds;
-use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageValidable};
+use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped, convertir_bson_deserializable, convertir_to_bson, convertir_to_bson_array};
 use millegrilles_common_rust::mongodb::ClientSession;
+use millegrilles_common_rust::recepteur_messages::MessageValide;
+use millegrilles_common_rust::serde::{Deserialize, Serialize};
+use std::cmp::max;
+use std::collections::HashMap;
 
-use crate::common::*;
 use crate::commandes::RowRelais;
+use crate::common::*;
 use crate::domain_manager::SenseursPassifsDomainManager;
 use crate::transactions::SenseurHoraireRow;
 
@@ -66,7 +65,7 @@ impl EvenementLecture {
 
     async fn recuperer_info<M,S>(self, middleware: &M, fingerprint_relai: S) -> Result<LectureAppareilInfo, Error>
         where
-            M: ValidateurX509 + MongoDao,
+            M: ValidateurX509 + MongoDaoTyped,
             S: AsRef<str>
     {
         if self.lecture.is_some() {
@@ -127,7 +126,7 @@ impl EvenementLecture {
     async fn charger_lecture_relayee<M,S>(self, middleware: &M, fingerprint_relai: S)
         -> Result<LectureAppareilInfo, Error>
         where
-            M: ValidateurX509 + MongoDao,
+            M: ValidateurX509 + MongoDaoTyped,
             S: AsRef<str>
     {
         let fingerprint_relai = fingerprint_relai.as_ref();
@@ -147,7 +146,7 @@ impl EvenementLecture {
             "fingerprint": fingerprint_relai
         };
         let collection = middleware.get_collection_typed::<RowRelais>(COLLECTIONS_RELAIS)?;
-        match collection.find_one(filtre, None).await? {
+        match collection.find_one(filtre).await? {
             Some(_inner) => {
                 // Ok, autorise
                 Ok(LectureAppareilInfo {
@@ -169,7 +168,7 @@ impl EvenementLecture {
 
 pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
     -> Result<(), Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
 {
     let lecture: EvenementLecture = deser_message_buffer!(m.message);
 
@@ -219,8 +218,8 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, _ge
         "$currentDate": { CHAMP_MODIFICATION: true },
     };
     let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    let opts = UpdateOptions::builder().upsert(true).build();
-    let resultat_update = collection.update_one(filtre, ops, Some(opts)).await?;
+    // let opts = UpdateOptions::builder().upsert(true).build();
+    let resultat_update = collection.update_one(filtre, ops).upsert(true).await?;
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
 
     // Charger etat a partir de mongo - va recuperer dates, lectures d'autres apps
@@ -234,9 +233,9 @@ pub async fn evenement_domaine_lecture<M>(middleware: &M, m: &MessageValide, _ge
             "descriptif": 1,
         };
         let filtre = doc! { CHAMP_UUID_APPAREIL: &lecture.uuid_appareil, CHAMP_USER_ID: &lecture.user_id };
-        let opts = FindOneOptions::builder().projection(projection).build();
+        // let opts = FindOneOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-        let doc_senseur = collection.find_one(filtre, opts).await?;
+        let doc_senseur = collection.find_one(filtre).projection(projection).await?;
 
         match doc_senseur {
             Some(d) => {
@@ -319,8 +318,8 @@ async fn ajouter_lecture_db<M>(middleware: &M, lecture: &LectureAppareilInfo) ->
             "$currentDate": {CHAMP_MODIFICATION: true},
         };
 
-        let opts = UpdateOptions::builder().upsert(true).build();
-        let _ = collection.update_one(filtre, ops, Some(opts)).await?;
+        // let opts = UpdateOptions::builder().upsert(true).build();
+        let _ = collection.update_one(filtre, ops).upsert(true).await?;
     }
 
     Ok(())
@@ -331,7 +330,7 @@ struct LecturesCumulees {
     user_id: String,
     #[serde(
         serialize_with = "epochseconds::serialize",
-        deserialize_with = "chrono_datetime_as_bson_datetime::deserialize"
+        deserialize_with = "FromChrono04DateTime::deserialize"
     )]
     heure: DateTime<Utc>,
     uuid_appareil: String,
@@ -340,7 +339,7 @@ struct LecturesCumulees {
 }
 
 pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionnaire: &SenseursPassifsDomainManager) -> Result<(), Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
 {
     // Donner 5 minutes apres l'heure pour completer traitement des evenements/lectures (65 minutes).
     let date_aggregation = Utc::now() - chrono::Duration::minutes(65);
@@ -350,10 +349,10 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionna
     };
 
     let mut session = middleware.get_session().await?;
-    session.start_transaction(None).await?;
+    session.start_transaction().await?;
 
     let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-    let mut curseur = collection.find_with_session(filtre, None, &mut session).await?;
+    let mut curseur = collection.find(filtre).session(&mut session).await?;
     while let Some(row) = curseur.next(&mut session).await {
         match convertir_bson_deserializable::<LecturesCumulees>(row?) {
             Ok(lecture) => generer_transactions(middleware, gestionnaire, lecture, &mut session).await?,
@@ -370,7 +369,7 @@ pub async fn generer_transactions_lectures_horaires<M>(middleware: &M, gestionna
 async fn generer_transactions<M>(
     middleware: &M, gestionnaire: &SenseursPassifsDomainManager, lectures: LecturesCumulees, session: &mut ClientSession)
     -> Result<(), Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
 {
     debug!("generer_transactions heure avant {:?} pour user_id {}, appareil : {}, senseur_id : {}",
         lectures.heure, lectures.user_id, lectures.uuid_appareil, lectures.senseur_id);
@@ -452,7 +451,7 @@ async fn generer_transactions<M>(
             // debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
             debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}", filtre);
             let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-            match collection.delete_one(filtre, None).await {
+            match collection.delete_one(filtre).await {
                 Ok(r) => {
                     debug!("transactions.transaction_senseur_horaire Resultat suppression lectures archivess : {:?}", r);
                 }
@@ -483,14 +482,14 @@ struct DeviceHourAggregateId {
 #[derive(Debug, Deserialize)]
 struct DeviceHourAggregateRow {
     _id: DeviceHourAggregateId,
-    #[serde(with="chrono_datetime_as_bson_datetime")]
+    #[serde(with="FromChrono04DateTime")]
     heure: DateTime<Utc>,
 }
 
 /// Call after rebuilding the database to reset the sensors per device
 pub async fn rebuild_sensor_list<M>(middleware: &M, session: &mut ClientSession)
     -> Result<(), Error>
-    where M: MongoDao
+    where M: MongoDaoTyped
 {
     let collection_appareils = middleware.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
     let collection_senseurs_horaire = middleware.get_collection_typed::<SenseurHoraireRow>(COLLECTIONS_SENSEURS_HORAIRE)?;
@@ -503,9 +502,9 @@ pub async fn rebuild_sensor_list<M>(middleware: &M, session: &mut ClientSession)
         } }
     ];
     debug!("rebuild_sensor_list Pipeline {:?}", pipeline);
-    let mut cursor = collection_senseurs_horaire.aggregate_with_session(pipeline, None, session).await?;
+    let mut cursor = collection_senseurs_horaire.aggregate(pipeline).session(&mut *session).await?;
 
-    while cursor.advance(session).await? {
+    while cursor.advance(&mut *session).await? {
         let row: DeviceHourAggregateRow = convertir_bson_deserializable(cursor.deserialize_current()?)?;
         debug!("rebuild_sensor_list Loading values for {:?}", row);
         let filtre_row = doc!{
@@ -514,7 +513,7 @@ pub async fn rebuild_sensor_list<M>(middleware: &M, session: &mut ClientSession)
             "senseur_id": &row._id.senseur_id,
             "heure": &row.heure,
         };
-        let lecture = collection_senseurs_horaire.find_one_with_session(filtre_row, None, session).await?;
+        let lecture = collection_senseurs_horaire.find_one(filtre_row).session(&mut *session).await?;
         if let Some(lecture) = lecture {
             debug!("rebuild_sensor_list Lecture loaded: {:?}", lecture);
             let value = match lecture.avg {
@@ -537,7 +536,7 @@ pub async fn rebuild_sensor_list<M>(middleware: &M, session: &mut ClientSession)
 
             debug!("rebuild_sensor_list Row filtre: {:?} ops {:?}", filtre, ops);
 
-            collection_appareils.update_one_with_session(filtre, ops, None, session).await?;
+            collection_appareils.update_one(filtre, ops).session(&mut *session).await?;
         } else {
             info!("rebuild_sensor_list No match for {:?}", row);
         }

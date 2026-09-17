@@ -4,12 +4,12 @@ use chrono_tz::Tz;
 
 use millegrilles_common_rust::bson::{doc, Document};
 
+use millegrilles_common_rust::bson::serde_helpers::datetime::FromChrono04DateTime;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
 use millegrilles_common_rust::chrono::{Duration, Timelike, Utc, DateTime as ChronoDateTime, DateTime};
 use millegrilles_common_rust::generateur_messages::GenerateurMessages;
-use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao};
-use millegrilles_common_rust::mongodb::options::{FindOneOptions, FindOptions};
+use millegrilles_common_rust::mongo_dao::{convertir_bson_deserializable, convertir_bson_value, filtrer_doc_id, MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::recepteur_messages::MessageValide;
 use millegrilles_common_rust::serde_json::{json, Value};
 use millegrilles_common_rust::tokio_stream::StreamExt;
@@ -19,7 +19,6 @@ use millegrilles_common_rust::{get_domaine_action, serde_json};
 use millegrilles_common_rust::millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_common_rust::rabbitmq_dao::TypeMessageOut;
-use millegrilles_common_rust::bson::serde_helpers::chrono_datetime_as_bson_datetime;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 
 use crate::common::*;
@@ -27,7 +26,7 @@ use crate::domain_manager::SenseursPassifsDomainManager;
 
 pub async fn consommer_requete<M>(middleware: &M, message: MessageValide, gestionnaire: &SenseursPassifsDomainManager)
                                   -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao
+    where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
 {
     debug!("Consommer requete : {:?}", &message.type_message);
 
@@ -197,11 +196,15 @@ async fn requete_appareils_usager<M>(middleware: &M, m: MessageValide, gestionna
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
-        let opts = FindOptions::builder()
-            .projection(projection)
+        // let opts = FindOptions::builder()
+        //     .projection(projection)
+        //     .limit(100)
+        //     .build();
+        let mut curseur = collection
+            .find(filtre)
             .limit(100)
-            .build();
-        let mut curseur = collection.find(filtre, opts).await?;
+            .projection(projection)
+            .await?;
 
         while let Some(d) = curseur.next().await {
             match convertir_bson_deserializable::<DocAppareil>(d?) {
@@ -262,8 +265,11 @@ async fn requete_appareil_display_configuration<M>(middleware: &M, m: MessageVal
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
-        let opts = FindOneOptions::builder().projection(projection).build();
-        let document_configuration = collection.find_one(filtre, opts).await?;
+        // let opts = FindOneOptions::builder().projection(projection).build();
+        let document_configuration = collection
+            .find_one(filtre)
+            .projection(projection)
+            .await?;
         match document_configuration {
             Some(d) => {
                 let display_configuration: DocAppareil = convertir_bson_deserializable(d)?;
@@ -317,8 +323,11 @@ async fn requete_appareil_programmes_configuration<M>(middleware: &M, m: Message
 
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
-        let opts = FindOneOptions::builder().projection(projection).build();
-        let document_configuration = collection.find_one(filtre, opts).await?;
+        // let opts = FindOneOptions::builder().projection(projection).build();
+        let document_configuration = collection
+            .find_one(filtre)
+            .projection(projection)
+            .await?;
         match document_configuration {
             Some(d) => {
                 let display_configuration: DocAppareil = convertir_bson_deserializable(d)?;
@@ -355,9 +364,12 @@ async fn requete_liste_noeuds<M>(middleware: &M, m: MessageValide, gestionnaire:
             CHAMP_MODIFICATION: 1,
             "descriptif": 1,
         };
-        let opts = FindOptions::builder().projection(projection).build();
+        // let opts = FindOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
-        let mut curseur = collection.find(filtre, opts).await?;
+        let mut curseur = collection
+            .find(filtre)
+            .projection(projection)
+            .await?;
 
         let mut noeuds = Vec::new();
         while let Some(d) = curseur.next().await {
@@ -397,9 +409,12 @@ async fn requete_liste_senseurs_par_uuid<M>(middleware: &M, m: MessageValide, ge
             CHAMP_CONNECTE: 1,
             CHAMP_VERSION: 1,
         };
-        let opts = FindOptions::builder().projection(projection).build();
+        // let opts = FindOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-        let mut curseur = collection.find(filtre, opts).await?;
+        let mut curseur = collection
+            .find(filtre)
+            .projection(projection)
+            .await?;
 
         let mut senseurs = Vec::new();
         while let Some(d) = curseur.next().await {
@@ -440,9 +455,12 @@ async fn requete_liste_senseurs_pour_noeud<M>(middleware: &M, m: MessageValide, 
             CHAMP_CONNECTE: 1,
             CHAMP_VERSION: 1,
         };
-        let opts = FindOptions::builder().projection(projection).build();
+        // let opts = FindOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-        let mut curseur = collection.find(filtre, opts).await?;
+        let mut curseur = collection
+            .find(filtre)
+            .projection(projection)
+            .await?;
 
         let mut senseurs = Vec::new();
         while let Some(d) = curseur.next().await {
@@ -482,9 +500,12 @@ async fn requete_get_noeud<M>(middleware: &M, m: MessageValide, gestionnaire: &S
             "lcd_actif": 1, "lcd_affichage": 1,
         };
         let filtre = doc! { CHAMP_INSTANCE_ID: &requete.instance_id };
-        let opts = FindOneOptions::builder().projection(projection).build();
+        // let opts = FindOneOptions::builder().projection(projection).build();
         let collection = middleware.get_collection(COLLECTIONS_INSTANCES)?;
-        let doc = collection.find_one(filtre, opts).await?;
+        let doc = collection
+            .find_one(filtre)
+            .projection(projection)
+            .await?;
 
         match doc {
             Some(mut n) => {
@@ -547,13 +568,17 @@ async fn requete_get_appareils_en_attente<M>(middleware: &M, m: MessageValide, g
             CHAMP_USER_ID: &user_id,
             "csr": {"$exists": true}
         };
-        let opts = FindOptions::builder()
-            .projection(projection)
-            .limit(100)
-            .build();
+        // let opts = FindOptions::builder()
+        //     .projection(projection)
+        //     .limit(100)
+        //     .build();
         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
 
-        let mut curseur = collection.find(filtre, opts).await?;
+        let mut curseur = collection
+            .find(filtre)
+            .projection(projection)
+            .limit(100)
+            .await?;
         while let Some(d) = curseur.next().await {
             let appareil: DocAppareil = convertir_bson_deserializable(d?)?;
             appareils.push(appareil);
@@ -587,7 +612,7 @@ struct RequeteGetStatistiquesSenseur {
 struct ResultatStatistiquesSenseurRow {
     #[serde(
     serialize_with = "epochseconds::serialize",
-    deserialize_with = "chrono_datetime_as_bson_datetime::deserialize"
+    deserialize_with = "FromChrono04DateTime::deserialize"
     )]
     heure: ChronoDateTime<Utc>,
     min: Option<f64>,
@@ -719,7 +744,7 @@ impl From<RowCollectionUsager> for ReponseGetConfigurationUsager {
 
 async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: GenerateurMessages + MongoDao
+    where M: GenerateurMessages + MongoDaoTyped
 {
     debug!("requete_get_configuration_usager Consommer requete : {:?}", & m.message);
     let requete: RequeteGetConfigurationUsager = deser_message_buffer!(m.message);
@@ -745,7 +770,7 @@ async fn requete_get_configuration_usager<M>(middleware: &M, m: MessageValide, _
 
     let collection = middleware.get_collection_typed::<RowCollectionUsager>(COLLECTIONS_USAGER)?;
     let filtre = doc! { CHAMP_USER_ID: &user_id };
-    let configuration_usager = match collection.find_one(filtre, None).await? {
+    let configuration_usager = match collection.find_one(filtre).await? {
         Some(inner) => inner,
         None => RowCollectionUsager::default(&user_id)
     };
@@ -771,7 +796,7 @@ struct ReponseGetTimezoneAppareil {
 
 async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, _gestionnaire: &SenseursPassifsDomainManager)
                                           -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: GenerateurMessages + MongoDao
+    where M: GenerateurMessages + MongoDaoTyped
 {
     debug!("requete_get_timezone_appareil Consommer requete : {:?}", & m.message);
     let requete: RequeteGetTimezoneAppareil = deser_message_buffer!(m.message);
@@ -781,7 +806,7 @@ async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, _ges
         let collection_appareil =
             middleware.get_collection_typed::<InformationAppareil>(COLLECTIONS_APPAREILS)?;
         let filtre = doc! {CHAMP_USER_ID: &requete.user_id, CHAMP_UUID_APPAREIL: &requete.uuid_appareil};
-        match collection_appareil.find_one(filtre, None).await? {
+        match collection_appareil.find_one(filtre).await? {
             Some(inner) => inner,
             None => {
                 let reponse = ReponseGetTimezoneAppareil{
@@ -802,7 +827,7 @@ async fn requete_get_timezone_appareil<M>(middleware: &M, m: MessageValide, _ges
             // Tenter de charger la timezone du compte usager
             let collection = middleware.get_collection_typed::<RowCollectionUsager>(COLLECTIONS_USAGER)?;
             let filtre = doc! { CHAMP_USER_ID: &requete.user_id };
-            match collection.find_one(filtre, None).await? {
+            match collection.find_one(filtre).await? {
                 Some(inner) => inner.timezone,
                 None => None
             }
@@ -846,7 +871,7 @@ async fn query_aggregate<M>(
 
     let mut reponse = Vec::with_capacity(100);
     let collection = middleware.get_collection(COLLECTIONS_SENSEURS_HORAIRE)?;
-    let mut result = collection.aggregate(pipeline, None).await?;
+    let mut result = collection.aggregate(pipeline).await?;
     while let Some(d) = result.next().await {
         let row: ResultatStatistiquesSenseurRow = convertir_bson_deserializable(d?)?;
         reponse.push(row);

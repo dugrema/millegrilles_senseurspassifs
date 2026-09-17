@@ -5,7 +5,7 @@ use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::serde_json::Value;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
-use millegrilles_common_rust::mongo_dao::opt_chrono_datetime_as_bson_datetime;
+use millegrilles_common_rust::mongo_serde::option_chrono_04_datetime;
 
 pub const DOMAINE_NOM: &str = "SenseursPassifs";
 pub const ROLE_RELAI_NOM: &str = "senseurspassifs_relai";
@@ -139,8 +139,8 @@ pub struct InformationAppareil {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
     #[serde(default,
-    serialize_with = "optionepochseconds::serialize",
-    deserialize_with = "opt_chrono_datetime_as_bson_datetime::deserialize")]
+        serialize_with = "optionepochseconds::serialize",
+        deserialize_with = "option_chrono_04_datetime::deserialize")]
     pub derniere_lecture: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ConfigurationAppareil>,
@@ -166,8 +166,8 @@ pub struct DocAppareil {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
     #[serde(default,
-    serialize_with = "optionepochseconds::serialize",
-    deserialize_with = "opt_chrono_datetime_as_bson_datetime::deserialize")]
+        serialize_with = "optionepochseconds::serialize",
+        deserialize_with = "option_chrono_04_datetime::deserialize")]
     pub derniere_lecture: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ConfigurationAppareil>,

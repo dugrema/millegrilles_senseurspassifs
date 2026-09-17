@@ -22,7 +22,7 @@ use millegrilles_common_rust::generateur_messages::GenerateurMessages;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::middleware::{Middleware, MiddlewareMessages};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_common_rust::mongo_dao::{start_transaction_regular, MongoDao};
+use millegrilles_common_rust::mongo_dao::{start_transaction_regular, MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange, QueueType};
 use millegrilles_common_rust::recepteur_messages::MessageValide;
@@ -107,7 +107,7 @@ impl AiguillageTransactions for SenseursPassifsDomainManager {
     async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
         -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
     where
-        M: ValidateurX509 + GenerateurMessages + MongoDao
+        M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
     {
         aiguillage_transaction(self, middleware, transaction, session).await
     }
@@ -117,7 +117,7 @@ impl AiguillageTransactions for SenseursPassifsDomainManager {
 impl GestionnaireDomaineSimple for SenseursPassifsDomainManager {
     async fn traiter_cedule<M>(&self, middleware: &M, trigger: &MessageCedule) -> Result<(), CommonError>
     where
-        M: MiddlewareMessages + BackupStarter + MongoDao
+        M: MiddlewareMessages + BackupStarter + MongoDaoTyped
     {
         let minute = trigger.get_date().minute();
         let heure = trigger.get_date().hour();

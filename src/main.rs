@@ -10,14 +10,27 @@ mod constants;
 mod maintenance;
 
 use log::{info};
-use millegrilles_common_rust::tokio as tokio;
+use millegrilles_common_rust::{rustls, tokio as tokio};
 // use crate::domaines_senseurspassifs::run;
 use crate::builder::run;
 
 fn main() {
-    env_logger::init();
+    init_resources();
+
     info!("Demarrer le contexte");
     executer()
+}
+
+fn init_resources() {
+    let rust_log_var = std::env::var("RUST_LOG").unwrap_or("error,millegrilles_maitredescles=warn,millegrilles_common_rust=warn".to_string());
+    env_logger::init();
+    // tracing_subscriber::registry()
+    //     .with(tracing_subscriber::EnvFilter::new(rust_log_var))
+    //     .with(tracing_subscriber::fmt::layer())
+    //     .init();
+
+    rustls::crypto::ring::default_provider().install_default()
+        .expect("Failed to install rustls crypto provider");
 }
 
 #[tokio::main(flavor = "current_thread")]

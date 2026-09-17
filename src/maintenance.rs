@@ -5,13 +5,13 @@ use millegrilles_common_rust::chrono::Utc;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error;
 use millegrilles_common_rust::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use millegrilles_common_rust::mongo_dao::MongoDao;
+use millegrilles_common_rust::mongo_dao::MongoDaoTyped;
 
-use crate::common::{DocAppareil, COLLECTIONS_APPAREILS, DOMAINE_NOM};
+use crate::common::{COLLECTIONS_APPAREILS, DOMAINE_NOM, DocAppareil};
 use crate::evenements::EvenementPresenceAppareilUser;
 
 pub async fn mark_devices_offline<M>(middleware: &M) -> Result<(), Error>
-where M: GenerateurMessages + MongoDao
+where M: GenerateurMessages + MongoDaoTyped
 {
     let expired = Utc::now() - chrono::Duration::minutes(5);
 
@@ -21,7 +21,7 @@ where M: GenerateurMessages + MongoDao
     };
 
     let collection = middleware.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
-    let mut cursor = collection.find(filtre.clone(), None).await?;
+    let mut cursor = collection.find(filtre.clone()).await?;
     while cursor.advance().await? {
         let device = cursor.deserialize_current()?;
         // Emit event for device
@@ -46,7 +46,7 @@ where M: GenerateurMessages + MongoDao
         "$set": {"connecte": false},
         "$currentDate": {CHAMP_MODIFICATION: true},
     };
-    collection.update_many(filtre, ops, None).await?;
+    collection.update_many(filtre, ops).await?;
 
     Ok(())
 }
@@ -54,7 +54,7 @@ where M: GenerateurMessages + MongoDao
 /// Used to remove certificates that have been signed after a certain amount of time.
 /// Avoids making devices use expired certificates.
 pub async fn maintain_device_certificates<M>(middleware: &M) -> Result<(), Error>
-where M: GenerateurMessages + MongoDao
+where M: GenerateurMessages + MongoDaoTyped
 {
     debug!("Maintain device certificates");
     let expired = Utc::now() - chrono::Duration::days(3);
@@ -73,7 +73,7 @@ where M: GenerateurMessages + MongoDao
         },
         "$currentDate": {CHAMP_MODIFICATION: true},
     };
-    collection.update_many(filtre, ops, None).await?;
+    collection.update_many(filtre, ops).await?;
 
     Ok(())
 }
