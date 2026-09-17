@@ -1,5 +1,5 @@
 use crate::domain_manager::SenseursPassifsDomainManager;
-use log::{debug, info, warn};
+use millegrilles_common_rust::tracing::{debug, info, warn};
 use millegrilles_common_rust::{chrono, tokio};
 use millegrilles_common_rust::chrono::Utc;
 use millegrilles_common_rust::configuration::{ConfigMessages, IsConfigNoeud};

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use log::{debug, error, info};
+use millegrilles_common_rust::tracing::{debug, error, info};
 use chrono_tz::Tz;
 
 use millegrilles_common_rust::bson::{doc, Document};

@@ -1,4 +1,4 @@
-use log::{debug, error, warn};
+use millegrilles_common_rust::tracing::{debug, error, warn};
 use std::collections::HashMap;
 
 use crate::common::*;

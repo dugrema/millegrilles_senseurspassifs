@@ -7,7 +7,7 @@ use crate::lectures::{generer_transactions_lectures_horaires, rebuild_sensor_lis
 use crate::maintenance::{maintain_device_certificates, mark_devices_offline};
 use crate::requetes::consommer_requete;
 use crate::transactions::aiguillage_transaction;
-use log::error;
+use millegrilles_common_rust::tracing::error;
 use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::backup::BackupStarter;
 use millegrilles_common_rust::certificats::ValidateurX509;

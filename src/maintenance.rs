@@ -1,4 +1,4 @@
-use log::debug;
+use millegrilles_common_rust::tracing::debug;
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::chrono;
 use millegrilles_common_rust::chrono::Utc;

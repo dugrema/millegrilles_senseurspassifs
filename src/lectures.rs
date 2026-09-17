@@ -1,4 +1,4 @@
-use log::{debug, error, info, warn};
+use millegrilles_common_rust::tracing::{debug, error, info, warn};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::bson::serde_helpers::datetime::FromChrono04DateTime;
 use millegrilles_common_rust::certificats::{ValidateurX509, VerificateurPermissions};
