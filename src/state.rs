@@ -14,6 +14,7 @@ use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
 use millegrilles_common_rust::v3::impls::format_service::FormatServiceImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use millegrilles_common_rust::v3::impls::security_service::SecurityServiceImpl;
+use crate::flow::transactions::SenseursPassifsTransactionService;
 
 /// Composition object with services from common library
 pub struct AppContext {
@@ -46,6 +47,13 @@ impl AppContext {
         let inbound = Arc::new(
             MessageInboundValidator::new(config.clone(), messaging.clone(), security.clone(), shutdown_token.clone())
         );
+
+        let transaction = Arc::new(SenseursPassifsTransactionService::new(
+            config.clone(),
+            format.clone(),
+            mongo.clone(),
+        ));
+
 
         Ok(AppContext {
             join_set,
