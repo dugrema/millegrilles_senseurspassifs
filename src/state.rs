@@ -4,9 +4,10 @@ use millegrilles_common_rust::chiffrage_cle::CleChiffrageHandlerImpl;
 use millegrilles_common_rust::configuration::{charger_configuration, ConfigMessages, charger_configuration_mongo, ConfigDb};
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::mongo_dao::{initialiser, MongoDaoImpl};
+use millegrilles_common_rust::openssl::pkey::{PKey, Private};
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_util::sync::CancellationToken;
-use millegrilles_common_rust::tracing::debug;
+use millegrilles_common_rust::tracing::{debug, info};
 use millegrilles_common_rust::v3::{ChiffrageService, ConfigService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageInboundValidator;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
@@ -14,6 +15,7 @@ use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
 use millegrilles_common_rust::v3::impls::format_service::FormatServiceImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use millegrilles_common_rust::v3::impls::security_service::SecurityServiceImpl;
+use crate::flow::app_service::ApplicationService;
 use crate::flow::transactions::SenseursPassifsTransactionService;
 
 /// Composition object with services from common library
@@ -54,6 +56,21 @@ impl AppContext {
             mongo.clone(),
         ));
 
+        let app_service = Arc::new(ApplicationService::new(outbound.clone(), transaction.clone(), mongo.clone()));
+
+        info!("Configure middleware resources : queues, index, tables, ...");
+        app_service.configure(messaging.as_ref(), config.as_ref()).await?;
+
+        info!("Connect services, start maintenance threads");
+        start_threads(
+            &mut join_set,
+            security.clone(),
+            messaging.as_ref(),
+            inbound.clone(),
+            app_service.clone(),
+            shutdown_token.clone(),
+        ).await?;
+
 
         Ok(AppContext {
             join_set,
@@ -75,7 +92,6 @@ async fn init_config() -> Result<ConfigServiceDbImpl, CommonError> {
 async fn init_security(config: &dyn ConfigService) -> Result<SecurityServiceImpl, CommonError> {
     let validator = build_store_path_v2(&config.get_configuration_pki().ca_certfile).map_err(|e| e.to_string())?;
     let private_key = config.get_configuration_pki().get_enveloppe_privee();
-    let encryption_key = private_key.enveloppe_pub.clone();
 
     let security_impl = SecurityServiceImpl::new(
         private_key,
@@ -83,17 +99,15 @@ async fn init_security(config: &dyn ConfigService) -> Result<SecurityServiceImpl
         Arc::new(CleChiffrageHandlerImpl::new()),
     );
 
-    // Trick for KeyMaster - use own key for encryption. DO NOT DO THIS WITH OTHER DOMAINS.
-    security_impl.add_encryption_publickey(encryption_key)?;
-
     Ok(security_impl)
 }
-
 
 async fn start_threads(
     join_set: &mut JoinSet<()>,
     security: Arc<SecurityServiceImpl>,
     messaging: &MessagingServiceImpl,
+    incoming: Arc<MessageInboundValidator>,
+    app_service: Arc<ApplicationService>,
     shutdown_token: CancellationToken,
 ) -> Result<(), CommonError> {
 
@@ -105,6 +119,9 @@ async fn start_threads(
     // Spawn other service maintenance threads
     let shutdown_token_clone = shutdown_token.clone();
     join_set.spawn(async move { security.run(shutdown_token_clone).await });
+
+    // Spawn consumer threads
+    app_service.start(join_set, incoming.clone())?;
 
     Ok(())
 }
