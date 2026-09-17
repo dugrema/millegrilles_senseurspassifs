@@ -15,7 +15,7 @@ use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl
 use millegrilles_common_rust::v3::PresenceService;
 use crate::common::DOMAINE_NOM;
 use crate::external::mongo::create_index_mongodb;
-use crate::external::mq::{init_queues, QUEUE_TICKER};
+use crate::external::mq::{init_queues, QUEUE_TICKER, QUEUE_REQUESTS, QUEUE_REPORTS, QUEUE_DEVICE_REQUESTS, QUEUE_COMMANDS, QUEUE_TRANSACTIONS, QUEUE_READINGS};
 use crate::flow::transactions::SenseursPassifsTransactionService;
 
 pub struct ApplicationService {
@@ -49,8 +49,31 @@ impl ApplicationService {
         let incoming_clone = incoming.clone();
         join_set.spawn(async move {self_clone.process_ticker_thread(incoming_clone).await});
 
+        let self_clone = self.clone();
+        let incoming_clone = incoming.clone();
+        join_set.spawn(async move {self_clone.process_requests_thread(incoming_clone).await});
 
-        todo!()
+        let self_clone = self.clone();
+        let incoming_clone = incoming.clone();
+        join_set.spawn(async move {self_clone.process_reports_thread(incoming_clone).await});
+
+        let self_clone = self.clone();
+        let incoming_clone = incoming.clone();
+        join_set.spawn(async move {self_clone.process_device_requests_thread(incoming_clone).await});
+
+        let self_clone = self.clone();
+        let incoming_clone = incoming.clone();
+        join_set.spawn(async move {self_clone.process_commands_thread(incoming_clone).await});
+
+        let self_clone = self.clone();
+        let incoming_clone = incoming.clone();
+        join_set.spawn(async move {self_clone.process_transaction_thread(incoming_clone).await});
+
+        let self_clone = self.clone();
+        let incoming_clone = incoming.clone();
+        join_set.spawn(async move {self_clone.process_readings_thread(incoming_clone).await});
+
+        Ok(())
     }
 
     async fn process_ticker_thread(&self, incoming: Arc<MessageInboundValidator>) {
@@ -61,7 +84,7 @@ impl ApplicationService {
         while let Some(result) = streamer.next().await {
             match result {
                 Ok(message) => {
-                    if let Err(e) = ticker_job(
+                    if let Err(e) = process_ticker_job(
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
                         message
@@ -76,9 +99,154 @@ impl ApplicationService {
         }
         debug!("process_ticker_thread Closed");
     }
+
+    // Requests
+    async fn process_requests_thread(&self, incoming: Arc<MessageInboundValidator>) {
+        let streamer = incoming.consume_named_queue(
+            format!("{}/{}", DOMAINE_NOM, QUEUE_REQUESTS).as_str(),
+        ).expect("Consumer streaming init failed");
+        tokio::pin!(streamer);
+        while let Some(result) = streamer.next().await {
+            match result {
+                Ok(message) => {
+                    if let Err(e) = process_request(
+                        self.mongo.as_ref(),
+                        message
+                    ).await {
+                        error!("Ticker job failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error processing request message: {}", e);
+                }
+            }
+        }
+        debug!("process_requests_thread Closed");
+    }
+
+    // Reports
+    async fn process_reports_thread(&self, incoming: Arc<MessageInboundValidator>) {
+        let streamer = incoming.consume_named_queue(
+            format!("{}/{}", DOMAINE_NOM, QUEUE_REPORTS).as_str(),
+        ).expect("Consumer streaming init failed");
+        tokio::pin!(streamer);
+        while let Some(result) = streamer.next().await {
+            match result {
+                Ok(message) => {
+                    if let Err(e) = process_report(
+                        self.mongo.as_ref(),
+                        message
+                    ).await {
+                        error!("Report job failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error processing report message: {}", e);
+                }
+            }
+        }
+        debug!("process_reports_thread Closed");
+    }
+
+    // Device requests
+    async fn process_device_requests_thread(&self, incoming: Arc<MessageInboundValidator>) {
+        let streamer = incoming.consume_named_queue(
+            format!("{}/{}", DOMAINE_NOM, QUEUE_DEVICE_REQUESTS).as_str(),
+        ).expect("Consumer streaming init failed");
+        tokio::pin!(streamer);
+        while let Some(result) = streamer.next().await {
+            match result {
+                Ok(message) => {
+                    if let Err(e) = process_device_request(
+                        self.mongo.as_ref(),
+                        message
+                    ).await {
+                        error!("Device request job failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error processing device request message: {}", e);
+                }
+            }
+        }
+        debug!("process_device_requests_thread Closed");
+    }
+
+    // Commands
+    async fn process_commands_thread(&self, incoming: Arc<MessageInboundValidator>) {
+        let streamer = incoming.consume_named_queue(
+            format!("{}/{}", DOMAINE_NOM, QUEUE_COMMANDS).as_str(),
+        ).expect("Consumer streaming init failed");
+        tokio::pin!(streamer);
+        while let Some(result) = streamer.next().await {
+            match result {
+                Ok(message) => {
+                    if let Err(e) = process_command(
+                        self.mongo.as_ref(),
+                        message
+                    ).await {
+                        error!("Command job failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error processing command message: {}", e);
+                }
+            }
+        }
+        debug!("process_commands_thread Closed");
+    }
+
+    // Transactions
+    async fn process_transaction_thread(&self, incoming: Arc<MessageInboundValidator>) {
+        let streamer = incoming.consume_named_queue(
+            format!("{}/{}", DOMAINE_NOM, QUEUE_TRANSACTIONS).as_str(),
+        ).expect("Consumer streaming init failed");
+        tokio::pin!(streamer);
+        while let Some(result) = streamer.next().await {
+            match result {
+                Ok(message) => {
+                    if let Err(e) = process_transaction(
+                        self.mongo.as_ref(),
+                        message
+                    ).await {
+                        error!("Transaction job failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error processing transaction message: {}", e);
+                }
+            }
+        }
+        debug!("process_transaction_thread Closed");
+    }
+
+    // Readings
+    async fn process_readings_thread(&self, incoming: Arc<MessageInboundValidator>) {
+        let streamer = incoming.consume_named_queue(
+            format!("{}/{}", DOMAINE_NOM, QUEUE_READINGS).as_str(),
+        ).expect("Consumer streaming init failed");
+        tokio::pin!(streamer);
+        while let Some(result) = streamer.next().await {
+            match result {
+                Ok(message) => {
+                    if let Err(e) = process_reading(
+                        self.mongo.as_ref(),
+                        message
+                    ).await {
+                        error!("Reading job failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error processing reading message: {}", e);
+                }
+            }
+        }
+        debug!("process_readings_thread Closed");
+    }
+
 }
 
-async fn ticker_job<M>(
+async fn process_ticker_job<M>(
     _mongo: &M,
     presence: &dyn PresenceService,
     trigger: MessageValidated
@@ -139,4 +307,46 @@ pub async fn validate_ticker(trigger: &MessageValidated) -> Result<(), CommonErr
         return Err(CommonError::Str("Ticker message without ticker (ceduleur) role, ignoring"));
     }
     Ok(())
+}
+
+async fn process_request<M>(
+    _mongo: &M,
+    _trigger: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    todo!()
+}
+
+async fn process_report<M>(
+    _mongo: &M,
+    _trigger: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    todo!()
+}
+
+async fn process_device_request<M>(
+    _mongo: &M,
+    _trigger: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    todo!()
+}
+
+async fn process_command<M>(
+    _mongo: &M,
+    _trigger: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    todo!()
+}
+
+async fn process_transaction<M>(
+    _mongo: &M,
+    _trigger: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    todo!()
+}
+
+async fn process_reading<M>(
+    _mongo: &M,
+    _trigger: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    todo!()
 }
