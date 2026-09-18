@@ -345,8 +345,8 @@ async fn process_request<M>(
         REQUETE_LISTE_SENSEURS_PAR_UUID => todo!(),
         REQUETE_LISTE_SENSEURS_NOEUD => todo!(),
         REQUETE_GET_APPAREILS_EN_ATTENTE => todo!(),
-        REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => todo!(),
-        REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => todo!(),
+        REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => get_device_display_configuration(mongo, outbound, wrapper).await,
+        REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => get_device_program_configuration(mongo, outbound, wrapper).await,
         REQUETE_GET_CONFIGURATION_USAGER => get_user_configuration(mongo, outbound, wrapper).await,
         _ => {
             info!("Unknown action {} for process_request, skipping", action);
@@ -398,7 +398,7 @@ async fn process_device_request<M>(
 }
 
 async fn process_command<M>(
-    _mongo: &M,
+    mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
@@ -413,10 +413,10 @@ async fn process_command<M>(
         COMMANDE_INSCRIRE_APPAREIL => todo!(),
         COMMANDE_CHALLENGE_APPAREIL => todo!(),
         COMMANDE_SIGNER_APPAREIL => todo!(),
-        COMMANDE_CONFIRMER_RELAI => todo!(),
+        COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
         COMMANDE_RESET_CERTIFICATS => todo!(),
         COMMAND_DISCONNECT_RELAY => todo!(),
-        EVENEMENT_PRESENCE_APPAREIL => todo!(),
+        EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
         _ => {
             info!("Unknown action {} for process_command, skipping", action);
             Ok(())

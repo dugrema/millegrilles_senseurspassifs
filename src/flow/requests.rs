@@ -4,7 +4,7 @@ use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::tokio_stream::StreamExt;
-use millegrilles_common_rust::tracing::info;
+use millegrilles_common_rust::tracing::{info, warn};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::models::ErrorMessage;
@@ -166,4 +166,92 @@ pub async fn get_device_timezone<M>(
         timezone,
         geoposition
     }).await
+}
+
+#[derive(Serialize)]
+struct ResponseGetDeviceDisplayConfiguration {
+    ok: bool,
+    display_configuration: DocAppareil,
+}
+
+pub async fn get_device_display_configuration<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    // Extract user_id, uuid_appareil (common name) from certificate
+    let user_id = match wrapper.certificate.get_user_id()? {
+        Some(u) => u.to_owned(),
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Missing user_id from certificate")).await
+    };
+    let uuid_appareil = match wrapper.certificate.subject()?.get("commonName") {
+        Some(s) => s.to_owned(),
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Missing common name from certificate")).await
+    };
+
+    let filtre = doc! { CHAMP_USER_ID: user_id, CHAMP_UUID_APPAREIL: uuid_appareil };
+    let projection = doc! {
+        CHAMP_UUID_APPAREIL: 1,
+        CHAMP_INSTANCE_ID: 1,
+        "derniere_lecture": 1,
+        "configuration.displays": 1,
+        "configuration.descriptif": 1,
+    };
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let document_configuration = collection.find_one(filtre).projection(projection).await?;
+
+    match document_configuration {
+        Some(value) => {
+            outbound.respond(wrapper.delivery_info, ResponseGetDeviceDisplayConfiguration {
+                ok: true,
+                display_configuration: value
+            }).await
+        },
+        None => {
+            outbound.respond(wrapper.delivery_info, ErrorMessage::err("Device not found")).await
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ResponseGetDeviceProgramConfiguration {
+    ok: bool,
+    programmes: DocAppareil,
+}
+pub async fn get_device_program_configuration<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    // Extract user_id, uuid_appareil (common name) from certificate
+    let user_id = match wrapper.certificate.get_user_id()? {
+        Some(u) => u.to_owned(),
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Missing user_id from certificate")).await
+    };
+    let uuid_appareil = match wrapper.certificate.subject()?.get("commonName") {
+        Some(s) => s.to_owned(),
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Missing common name from certificate")).await
+    };
+
+    let filtre = doc! { CHAMP_USER_ID: user_id, CHAMP_UUID_APPAREIL: uuid_appareil };
+    let projection = doc! {
+        CHAMP_UUID_APPAREIL: 1,
+        CHAMP_INSTANCE_ID: 1,
+        "derniere_lecture": 1,
+        "configuration.programmes": 1,
+    };
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let document_configuration = collection.find_one(filtre).projection(projection).await?;
+
+    match document_configuration {
+        Some(value) => {
+            outbound.respond(wrapper.delivery_info, ResponseGetDeviceProgramConfiguration {
+                ok: true,
+                programmes: value
+            }).await
+        },
+        None => {
+            outbound.respond(wrapper.delivery_info, ErrorMessage::err("Device not found")).await
+        }
+    }
 }
