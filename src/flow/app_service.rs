@@ -14,7 +14,7 @@ use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFaca
 use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use millegrilles_common_rust::v3::models::ErrorMessage;
-use millegrilles_common_rust::v3::PresenceService;
+use millegrilles_common_rust::v3::{PkiService, PresenceService};
 use crate::common::{DOMAINE_NOM, EVENEMENT_LECTURE, ROLE_RELAI_NOM};
 use crate::external::mongo::create_index_mongodb;
 use crate::external::mq::{init_queues, QUEUE_TICKER, QUEUE_REQUESTS, QUEUE_REPORTS, QUEUE_DEVICE_REQUESTS, QUEUE_COMMANDS, QUEUE_TRANSACTIONS, QUEUE_READINGS};
@@ -23,6 +23,7 @@ use crate::flow::requests::*;
 use crate::flow::transactions::SenseursPassifsTransactionService;
 
 pub struct ApplicationService {
+    pki: Arc<dyn PkiService>,
     outbound: Arc<MessageOutboundFacade>,
     transaction: Arc<SenseursPassifsTransactionService>,
     mongo: Arc<MongoDaoImpl>,
@@ -30,11 +31,13 @@ pub struct ApplicationService {
 
 impl ApplicationService {
     pub fn new(
+        pki: Arc<dyn PkiService>,
         outbound: Arc<MessageOutboundFacade>,
         transaction: Arc<SenseursPassifsTransactionService>,
         mongo: Arc<MongoDaoImpl>,
     ) -> Self {
         Self {
+            pki,
             outbound,
             transaction,
             mongo,
@@ -239,6 +242,7 @@ impl ApplicationService {
             match result {
                 Ok(message) => {
                     if let Err(e) = process_reading(
+                        self.pki.as_ref(),
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
                         message
@@ -421,6 +425,7 @@ async fn process_transaction<M>(
 }
 
 async fn process_reading<M>(
+    pki: &dyn PkiService,
     mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
@@ -447,7 +452,7 @@ async fn process_reading<M>(
     }
 
     match action {
-        EVENEMENT_LECTURE => process_reading_event(mongo, outbound, wrapper).await,
+        EVENEMENT_LECTURE => process_reading_event(pki, mongo, outbound, wrapper).await,
         _ => {
             info!("Unknown action {} for process_request, skipping", action);
             Ok(())

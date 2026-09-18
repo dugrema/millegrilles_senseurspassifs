@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
-use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds, MessageMilleGrillesOwned};
 use millegrilles_common_rust::mongo_serde::option_chrono_04_datetime;
-use crate::common::{GeopositionAppareil, ParametresDisplay, ProgrammeAppareil};
+use crate::common::{ParametresDisplay, ProgrammeAppareil};
 
 #[derive(Deserialize)]
 pub struct RequestGetUserConfiguration {
@@ -52,6 +52,13 @@ pub struct LectureSenseur {
     pub valeur: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub valeur_str: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GeopositionAppareil {
+    latitude: Option<f32>,
+    longitude: Option<f32>,
+    accuracy: Option<f32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -192,6 +199,76 @@ pub struct DocAppareil {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connecte: Option<bool>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NotificationAppareil {
+    pub programme_id: String,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LectureAppareilInfo {
+    pub uuid_appareil: String,
+    pub user_id: String,
+    pub lectures_senseurs: HashMap<String, LectureSenseur>,
+    pub displays: Option<Vec<ParamsDisplay>>,
+    pub notifications: Option<Vec<NotificationAppareil>>
+}
+
+impl LectureAppareilInfo {
+    pub fn calculer_derniere_lecture(&self) -> Option<DateTime<Utc>> {
+        let mut date_lecture: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
+        for l in self.lectures_senseurs.values() {
+            date_lecture = l.timestamp.max(date_lecture);
+        }
+
+        match &date_lecture == &DateTime::<Utc>::MIN_UTC {
+            true => {
+                None
+            },
+            false => {
+                Some(date_lecture)
+            }
+        }
+    }
+
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LectureAppareil {
+    pub lectures_senseurs: HashMap<String, LectureSenseur>,
+    pub displays: Option<Vec<ParamsDisplay>>,
+    pub notifications: Option<Vec<NotificationAppareil>>
+}
+
+#[derive(Deserialize)]
+pub struct RowRelais {
+    // pub fingerprint: String,
+    // pub user_id: String,
+    // #[serde(default, with="optionepochseconds")]
+    // pub expiration: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InformationAppareil {
+    pub uuid_appareil: String,
+    pub instance_id: Option<String>,
+    pub user_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descriptif: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
+    #[serde(default,
+        serialize_with = "optionepochseconds::serialize",
+        deserialize_with = "option_chrono_04_datetime::deserialize")]
+    pub derniere_lecture: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<ConfigurationAppareil>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connecte: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }

@@ -56,7 +56,7 @@ impl AppContext {
             mongo.clone(),
         ));
 
-        let app_service = Arc::new(ApplicationService::new(outbound.clone(), transaction.clone(), mongo.clone()));
+        let app_service = Arc::new(ApplicationService::new(security.clone(), outbound.clone(), transaction.clone(), mongo.clone()));
 
         info!("Configure middleware resources : queues, index, tables, ...");
         app_service.configure(messaging.as_ref(), config.as_ref()).await?;

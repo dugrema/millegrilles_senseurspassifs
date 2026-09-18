@@ -131,26 +131,26 @@ pub struct LectureTransaction {
     pub valeur: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InformationAppareil {
-    pub uuid_appareil: String,
-    pub instance_id: Option<String>,
-    pub user_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub descriptif: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
-    #[serde(default,
-        serialize_with = "optionepochseconds::serialize",
-        deserialize_with = "option_chrono_04_datetime::deserialize")]
-    pub derniere_lecture: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub configuration: Option<ConfigurationAppareil>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub connecte: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct InformationAppareil {
+//     pub uuid_appareil: String,
+//     pub instance_id: Option<String>,
+//     pub user_id: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub descriptif: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
+//     #[serde(default,
+//         serialize_with = "optionepochseconds::serialize",
+//         deserialize_with = "option_chrono_04_datetime::deserialize")]
+//     pub derniere_lecture: Option<DateTime<Utc>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub configuration: Option<ConfigurationAppareil>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub connecte: Option<bool>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub version: Option<String>,
+// }
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
 // pub struct DocAppareil {
@@ -202,65 +202,65 @@ pub struct InformationAppareil {
 //     pub version: Option<String>,
 // }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NotificationAppareil {
-    pub programme_id: String,
-    pub message: Option<String>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct NotificationAppareil {
+//     pub programme_id: String,
+//     pub message: Option<String>,
+// }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LectureAppareil {
-    pub lectures_senseurs: HashMap<String, LectureSenseur>,
-    pub displays: Option<Vec<ParamsDisplay>>,
-    pub notifications: Option<Vec<NotificationAppareil>>
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct LectureAppareil {
+//     pub lectures_senseurs: HashMap<String, LectureSenseur>,
+//     pub displays: Option<Vec<ParamsDisplay>>,
+//     pub notifications: Option<Vec<NotificationAppareil>>
+// }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ParamsDisplay {
-    pub name: String,
-    pub format: String,
-    pub height: Option<u16>,
-    pub width: Option<u16>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct ParamsDisplay {
+//     pub name: String,
+//     pub format: String,
+//     pub height: Option<u16>,
+//     pub width: Option<u16>,
+// }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LectureSenseur {
-    #[serde(with="epochseconds")]
-    pub timestamp: DateTime<Utc>,
-    #[serde(rename="type")]
-    pub type_: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub valeur: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub valeur_str: Option<String>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct LectureSenseur {
+//     #[serde(with="epochseconds")]
+//     pub timestamp: DateTime<Utc>,
+//     #[serde(rename="type")]
+//     pub type_: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub valeur: Option<f64>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub valeur_str: Option<String>,
+// }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GeopositionAppareil {
-    latitude: Option<f32>,
-    longitude: Option<f32>,
-    accuracy: Option<f32>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct GeopositionAppareil {
+//     latitude: Option<f32>,
+//     longitude: Option<f32>,
+//     accuracy: Option<f32>,
+// }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConfigurationAppareil {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub descriptif: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cacher_senseurs: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub descriptif_senseurs: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub displays: Option<HashMap<String, ParametresDisplay>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timezone: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub geoposition: Option<GeopositionAppareil>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filtres_senseurs: Option<HashMap<String,Vec<String>>>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct ConfigurationAppareil {
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub descriptif: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub cacher_senseurs: Option<Vec<String>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub descriptif_senseurs: Option<HashMap<String, String>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub displays: Option<HashMap<String, ParametresDisplay>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub timezone: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub geoposition: Option<GeopositionAppareil>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub filtres_senseurs: Option<HashMap<String,Vec<String>>>,
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParametresDisplay {
@@ -286,15 +286,15 @@ pub struct ProgrammeAppareil {
     args: HashMap<String, Value>
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TransactionLectureHoraire {
-    #[serde(with="epochseconds")]
-    pub heure: DateTime<Utc>,
-    pub user_id: String,
-    pub uuid_appareil: String,
-    pub senseur_id: String,
-    pub lectures: Vec<LectureSenseur>,
-    pub min: Option<f64>,
-    pub max: Option<f64>,
-    pub avg: Option<f64>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct TransactionLectureHoraire {
+//     #[serde(with="epochseconds")]
+//     pub heure: DateTime<Utc>,
+//     pub user_id: String,
+//     pub uuid_appareil: String,
+//     pub senseur_id: String,
+//     pub lectures: Vec<LectureSenseur>,
+//     pub min: Option<f64>,
+//     pub max: Option<f64>,
+//     pub avg: Option<f64>,
+// }
