@@ -62,7 +62,7 @@ pub async fn get_user_devices<M>(
         let value = match row {
             Ok(row) => row,
             Err(e) => {
-                info!("Mapping error to DocAppareil for user_id {}", user_id);
+                info!("Mapping error to DocAppareil for user_id {}: {:?}", user_id, e);
                 continue
             }
         };
