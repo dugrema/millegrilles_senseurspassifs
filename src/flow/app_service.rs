@@ -332,7 +332,7 @@ async fn process_request<M>(
         None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
     };
     match action {
-        REQUETE_GET_APPAREILS_USAGER => todo!(),
+        REQUETE_GET_APPAREILS_USAGER => get_user_devices(mongo, outbound, wrapper).await,
         REQUETE_LISTE_NOEUDS => todo!(),
         REQUETE_GET_NOEUD => todo!(),
         REQUETE_LISTE_SENSEURS_PAR_UUID => todo!(),

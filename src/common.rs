@@ -152,55 +152,55 @@ pub struct InformationAppareil {
     pub version: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DocAppareil {
-    pub uuid_appareil: String,
-    pub instance_id: Option<String>,
-    pub user_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cle_publique: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub csr: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub certificat: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fingerprint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
-    #[serde(default,
-        serialize_with = "optionepochseconds::serialize",
-        deserialize_with = "option_chrono_04_datetime::deserialize")]
-    pub derniere_lecture: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub configuration: Option<ConfigurationAppareil>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub displays: Option<Vec<ParamsDisplay>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
-
-    /// Si true, indique qu'une transaction a ete produite (requis pour regeneration)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub persiste: Option<bool>,
-
-    /// Liste de senseurs avec des lectures disponibles (historique)
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub lectures_disponibles: Option<Vec<String>>,
-
-    /// Liste de senseurs avec des lectures disponibles (historique)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub types_donnees: Option<HashMap<String, String>>,
-
-    /// Flag supprime (agit davantage comme "hide")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub supprime: Option<bool>,
-
-    /// Flag connecte (websocket)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub connecte: Option<bool>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct DocAppareil {
+//     pub uuid_appareil: String,
+//     pub instance_id: Option<String>,
+//     pub user_id: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub cle_publique: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub csr: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub certificat: Option<Vec<String>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub fingerprint: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub senseurs: Option<BTreeMap<String, LectureSenseur>>,
+//     #[serde(default,
+//         serialize_with = "optionepochseconds::serialize",
+//         deserialize_with = "option_chrono_04_datetime::deserialize")]
+//     pub derniere_lecture: Option<DateTime<Utc>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub configuration: Option<ConfigurationAppareil>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub displays: Option<Vec<ParamsDisplay>>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub programmes: Option<HashMap<String, ProgrammeAppareil>>,
+//
+//     /// Si true, indique qu'une transaction a ete produite (requis pour regeneration)
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub persiste: Option<bool>,
+//
+//     /// Liste de senseurs avec des lectures disponibles (historique)
+//     // #[serde(skip_serializing_if = "Option::is_none")]
+//     // pub lectures_disponibles: Option<Vec<String>>,
+//
+//     /// Liste de senseurs avec des lectures disponibles (historique)
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub types_donnees: Option<HashMap<String, String>>,
+//
+//     /// Flag supprime (agit davantage comme "hide")
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub supprime: Option<bool>,
+//
+//     /// Flag connecte (websocket)
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub connecte: Option<bool>,
+//
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub version: Option<String>,
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NotificationAppareil {
