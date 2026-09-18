@@ -12,7 +12,7 @@ use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{Mes
 use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
-use millegrilles_common_rust::tracing::{debug, warn};
+use millegrilles_common_rust::tracing::{debug, info, warn};
 use millegrilles_common_rust::v3::{PkiService, TransactionService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
@@ -52,6 +52,60 @@ pub async fn process_reading_event<M>(
     }
 
     Ok(())
+}
+
+async fn produce_new_device_transaction(
+    mongo: &dyn MongoDao,
+    transaction: &SenseursPassifsTransactionService,
+    uuid_appareil: &str,
+    user_id: &str,
+) -> Result<(), CommonError> {
+
+    todo!()
+    //         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
+    //         let filtre = doc! {
+    //             CHAMP_USER_ID: &transaction_convertie.user_id,
+    //             CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+    //         };
+    //         let mut ops = doc! {
+    //             "$setOnInsert": {
+    //                 CHAMP_USER_ID: &transaction_convertie.user_id,
+    //                 CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
+    //                 CHAMP_CREATION: Utc::now(),
+    //                 "present": false,
+    //             },
+    //             "$currentDate": {
+    //                 CHAMP_MODIFICATION: true,
+    //             },
+    //             "$addToSet": {
+    //                 CHAMP_LECTURES_DISPONIBLES: &transaction_convertie.senseur_id
+    //             }
+    //         };
+    //
+    //         // Detecter type de lectures (aucun si vide)
+    //         let mut type_donnees = None;
+    //         for l in &transaction_convertie.lectures {
+    //             type_donnees = Some(l.type_.clone());
+    //             break
+    //         }
+    //
+    //         if let Some(type_donnees) = type_donnees {
+    //             ops.insert("$set", doc!{
+    //                 format!("types_donnees.{}", transaction_convertie.senseur_id): type_donnees
+    //             });
+    //         }
+    //
+    //         // let options = UpdateOptions::builder().upsert(true).build();
+    //         if let Err(e) = collection
+    //             .update_one(filtre, ops)
+    //             .upsert(true)
+    //             .session(&mut *session)
+    //             .await
+    //         {
+    //             Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
+    //         }
+
+
 }
 
 
@@ -209,6 +263,7 @@ async fn update_device_current_value(
     };
     let collection = mongo.get_collection(COLLECTIONS_APPAREILS)?;
     let resultat_update = collection.update_one(filtre, ops).upsert(true).await?;
+
     debug!("evenement_domaine_lecture Resultat update : {:?}", resultat_update);
 
     Ok(())

@@ -335,3 +335,41 @@ pub struct TransactionMajAppareil {
     pub uuid_appareil: String,
     pub configuration: ConfigurationAppareil,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SenseurHoraireRow {
+    #[serde(rename="_mg-creation", with="FromChrono04DateTime")]
+    pub creation: DateTime<Utc>,
+    pub user_id: String,
+    pub uuid_appareil: String,
+    pub senseur_id: String,
+    #[serde(with="FromChrono04DateTime")]
+    pub heure: DateTime<Utc>,
+    #[serde(rename="type")]
+    pub type_: Option<String>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub avg: Option<f64>,
+}
+
+impl From<&TransactionLectureHoraire> for SenseurHoraireRow {
+    fn from(value: &TransactionLectureHoraire) -> Self {
+
+        let type_ = match value.lectures.get(value.lectures.len()-1) {
+            Some(lecture) => Some(lecture.type_.clone()),
+            None => None
+        };
+
+        Self {
+            creation: Utc::now(),
+            user_id: value.user_id.clone(),
+            uuid_appareil: value.uuid_appareil.clone(),
+            senseur_id: value.senseur_id.clone(),
+            heure: value.heure,
+            type_,
+            min: value.min,
+            max: value.max,
+            avg: value.avg,
+        }
+    }
+}
