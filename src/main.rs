@@ -1,16 +1,17 @@
-mod requetes;
+// mod requetes;
 mod common;
-mod lectures;
-mod transactions;
-mod commandes;
-mod evenements;
-mod builder;
-mod domain_manager;
+// mod lectures;
+// mod transactions;
+// mod commandes;
+// mod evenements;
+// mod builder;
+// mod domain_manager;
 mod constants;
-mod maintenance;
+// mod maintenance;
 pub mod external;
 pub mod flow;
 pub mod state;
+pub mod models;
 
 use crate::common::DOMAINE_NOM;
 use crate::state::AppContext;

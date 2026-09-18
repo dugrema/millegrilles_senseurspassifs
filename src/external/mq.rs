@@ -3,6 +3,7 @@ use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange};
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use crate::common::*;
+use crate::flow::requests::{REQUETE_GET_APPAREILS_EN_ATTENTE, REQUETE_GET_APPAREILS_USAGER, REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION, REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION, REQUETE_GET_CONFIGURATION_USAGER, REQUETE_GET_NOEUD, REQUETE_GET_STATISTIQUES_SENSEUR, REQUETE_GET_TIMEZONE_APPAREIL, REQUETE_LISTE_NOEUDS, REQUETE_LISTE_SENSEURS_NOEUD, REQUETE_LISTE_SENSEURS_PAR_UUID};
 
 pub const QUEUE_TTL_DEFAULT: u32 = 30_000;
 pub const QUEUE_REPORT_TTL: u32 = 180_000;
@@ -41,6 +42,7 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_SENSEURS_PAR_UUID), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_LISTE_SENSEURS_NOEUD), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_APPAREILS_EN_ATTENTE), exchange: Securite::L2Prive },
+                ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_CONFIGURATION_USAGER), exchange: Securite::L2Prive },
             ],
             ttl: Some(QUEUE_TTL_DEFAULT),
             durable: true,
@@ -62,7 +64,6 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
         ConfigQueue {
             nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_DEVICE_REQUESTS),
             routing_keys: vec![
-                ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_CONFIGURATION_USAGER), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_TIMEZONE_APPAREIL), exchange: Securite::L2Prive },
             ],
             ttl: Some(QUEUE_DEVICE_TTL),

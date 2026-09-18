@@ -10,17 +10,17 @@ use millegrilles_common_rust::mongo_serde::option_chrono_04_datetime;
 pub const DOMAINE_NOM: &str = "SenseursPassifs";
 pub const ROLE_RELAI_NOM: &str = "senseurspassifs_relai";
 
-pub const REQUETE_GET_APPAREILS_USAGER: &str = "getAppareilsUsager";
-pub const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
-pub const REQUETE_GET_NOEUD: &str = "getNoeud";
-pub const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
-pub const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
-pub const REQUETE_GET_APPAREILS_EN_ATTENTE: &str = "getAppareilsEnAttente";
-pub const REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION: &str = "getAppareilDisplayConfiguration";
-pub const REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION: &str = "getAppareilProgrammesConfiguration";
-pub const REQUETE_GET_STATISTIQUES_SENSEUR: &str = "getStatistiquesSenseur";
-pub const REQUETE_GET_CONFIGURATION_USAGER: &str = "getConfigurationUsager";
-pub const REQUETE_GET_TIMEZONE_APPAREIL: &str = "getTimezoneAppareil";
+// pub const REQUETE_GET_APPAREILS_USAGER: &str = "getAppareilsUsager";
+// pub const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
+// pub const REQUETE_GET_NOEUD: &str = "getNoeud";
+// pub const REQUETE_LISTE_SENSEURS_PAR_UUID: &str = "listeSenseursParUuid";
+// pub const REQUETE_LISTE_SENSEURS_NOEUD: &str = "listeSenseursPourNoeud";
+// pub const REQUETE_GET_APPAREILS_EN_ATTENTE: &str = "getAppareilsEnAttente";
+// pub const REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION: &str = "getAppareilDisplayConfiguration";
+// pub const REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION: &str = "getAppareilProgrammesConfiguration";
+// pub const REQUETE_GET_STATISTIQUES_SENSEUR: &str = "getStatistiquesSenseur";
+// pub const REQUETE_GET_CONFIGURATION_USAGER: &str = "getConfigurationUsager";
+// pub const REQUETE_GET_TIMEZONE_APPAREIL: &str = "getTimezoneAppareil";
 
 pub const EVENEMENT_LECTURE: &str = "lecture";
 pub const EVENEMENT_LECTURE_CONFIRMEE: &str = "lectureConfirmee";

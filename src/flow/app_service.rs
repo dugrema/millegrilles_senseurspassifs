@@ -1,21 +1,25 @@
 use std::sync::Arc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::chrono::{Datelike, Duration, Timelike, Utc};
+use millegrilles_common_rust::constantes::Securite;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::mongo_dao::{MongoDaoImpl, MongoDaoTyped};
 use millegrilles_common_rust::tokio;
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_stream::StreamExt;
-use millegrilles_common_rust::tracing::{debug, error, warn};
+use millegrilles_common_rust::tracing::{debug, error, info, warn};
 use millegrilles_common_rust::v3::facades::message_inbound::{MessageInboundValidator, MessageValidated};
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
+use millegrilles_common_rust::v3::models::ErrorMessage;
 use millegrilles_common_rust::v3::PresenceService;
-use crate::common::DOMAINE_NOM;
+use crate::common::{DOMAINE_NOM, EVENEMENT_LECTURE, ROLE_RELAI_NOM};
 use crate::external::mongo::create_index_mongodb;
 use crate::external::mq::{init_queues, QUEUE_TICKER, QUEUE_REQUESTS, QUEUE_REPORTS, QUEUE_DEVICE_REQUESTS, QUEUE_COMMANDS, QUEUE_TRANSACTIONS, QUEUE_READINGS};
+use crate::flow::readings::process_reading_event;
+use crate::flow::requests::*;
 use crate::flow::transactions::SenseursPassifsTransactionService;
 
 pub struct ApplicationService {
@@ -111,6 +115,7 @@ impl ApplicationService {
                 Ok(message) => {
                     if let Err(e) = process_request(
                         self.mongo.as_ref(),
+                        self.outbound.as_ref(),
                         message
                     ).await {
                         error!("Ticker job failed: {}", e);
@@ -135,6 +140,7 @@ impl ApplicationService {
                 Ok(message) => {
                     if let Err(e) = process_report(
                         self.mongo.as_ref(),
+                        self.outbound.as_ref(),
                         message
                     ).await {
                         error!("Report job failed: {}", e);
@@ -159,6 +165,7 @@ impl ApplicationService {
                 Ok(message) => {
                     if let Err(e) = process_device_request(
                         self.mongo.as_ref(),
+                        self.outbound.as_ref(),
                         message
                     ).await {
                         error!("Device request job failed: {}", e);
@@ -183,6 +190,7 @@ impl ApplicationService {
                 Ok(message) => {
                     if let Err(e) = process_command(
                         self.mongo.as_ref(),
+                        self.outbound.as_ref(),
                         message
                     ).await {
                         error!("Command job failed: {}", e);
@@ -207,6 +215,7 @@ impl ApplicationService {
                 Ok(message) => {
                     if let Err(e) = process_transaction(
                         self.mongo.as_ref(),
+                        self.outbound.as_ref(),
                         message
                     ).await {
                         error!("Transaction job failed: {}", e);
@@ -231,6 +240,7 @@ impl ApplicationService {
                 Ok(message) => {
                     if let Err(e) = process_reading(
                         self.mongo.as_ref(),
+                        self.outbound.as_ref(),
                         message
                     ).await {
                         error!("Reading job failed: {}", e);
@@ -310,43 +320,137 @@ pub async fn validate_ticker(trigger: &MessageValidated) -> Result<(), CommonErr
 }
 
 async fn process_request<M>(
-    _mongo: &M,
-    _trigger: MessageValidated
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    todo!()
+    let action = match wrapper.message.routage.as_ref() {
+        Some(routing) => match routing.action.as_ref() {
+            Some(action) => action.as_str(),
+            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
+        },
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
+    };
+    match action {
+        REQUETE_GET_APPAREILS_USAGER => todo!(),
+        REQUETE_LISTE_NOEUDS => todo!(),
+        REQUETE_GET_NOEUD => todo!(),
+        REQUETE_LISTE_SENSEURS_PAR_UUID => todo!(),
+        REQUETE_LISTE_SENSEURS_NOEUD => todo!(),
+        REQUETE_GET_APPAREILS_EN_ATTENTE => todo!(),
+        REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => todo!(),
+        REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => todo!(),
+        REQUETE_GET_CONFIGURATION_USAGER => get_user_configuration(mongo, outbound, wrapper).await,
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
 }
 
 async fn process_report<M>(
     _mongo: &M,
-    _trigger: MessageValidated
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    todo!()
+    let action = match wrapper.message.routage.as_ref() {
+        Some(routing) => match routing.action.as_ref() {
+            Some(action) => action.as_str(),
+            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
+        },
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
+    };
+    match action {
+        REQUETE_GET_STATISTIQUES_SENSEUR => todo!(),
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
 }
 
 async fn process_device_request<M>(
     _mongo: &M,
-    _trigger: MessageValidated
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    todo!()
+    let action = match wrapper.message.routage.as_ref() {
+        Some(routing) => match routing.action.as_ref() {
+            Some(action) => action.as_str(),
+            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
+        },
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
+    };
+    match action {
+        REQUETE_GET_TIMEZONE_APPAREIL => todo!(),
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
 }
 
 async fn process_command<M>(
     _mongo: &M,
-    _trigger: MessageValidated
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let action = match wrapper.message.routage.as_ref() {
+        Some(routing) => match routing.action.as_ref() {
+            Some(action) => action.as_str(),
+            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
+        },
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in command")).await
+    };
     todo!()
 }
 
 async fn process_transaction<M>(
     _mongo: &M,
-    _trigger: MessageValidated
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let action = match wrapper.message.routage.as_ref() {
+        Some(routing) => match routing.action.as_ref() {
+            Some(action) => action.as_str(),
+            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
+        },
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in command")).await
+    };
     todo!()
 }
 
 async fn process_reading<M>(
-    _mongo: &M,
-    _trigger: MessageValidated
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    todo!()
+    let action = match wrapper.message.routage.as_ref() {
+        Some(routing) => match routing.action.as_ref() {
+            Some(action) => action.as_str(),
+            None => {
+                debug!("No action provided in event {}, skipped", wrapper.message.id);
+                return Ok(())
+            },
+        },
+        None => {
+            debug!("No routing provided in event {}, skipped", wrapper.message.id);
+            return Ok(())
+        }
+    };
+
+    if ! wrapper.certificate.verifier_exchanges(vec![Securite::L2Prive])? &&
+        !wrapper.certificate.verifier_roles_string(vec![ROLE_RELAI_NOM.to_string()])?
+    {
+        debug!("Unauthorized message {} in process_reading, skipped", wrapper.message.id);
+        return Ok(())
+    }
+
+    match action {
+        EVENEMENT_LECTURE => process_reading_event(mongo, outbound, wrapper).await,
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
 }
