@@ -373,3 +373,11 @@ impl From<&TransactionLectureHoraire> for SenseurHoraireRow {
         }
     }
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvenementPresenceAppareil {
+    pub uuid_appareil: String,
+    pub user_id: String,
+    pub version: Option<String>,
+    pub deconnecte: Option<bool>,
+}

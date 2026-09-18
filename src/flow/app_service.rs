@@ -292,7 +292,7 @@ async fn process_ticker_job<M>(
         warn!("Error emitting domain presence: {}", e);
     }
 
-    if minute % 1 == 0 {
+    if minute % 2 == 0 {
         if let Err(e) = mark_devices_offline(mongo, outbound).await {
             error!("Error mark_devices_offline : {:?}", e);
         }

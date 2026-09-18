@@ -9,7 +9,7 @@ use crate::common::{COLLECTIONS_APPAREILS, DOMAINE_NOM};
 use crate::models::{DocAppareil, EvenementPresenceAppareilUser};
 
 pub async fn mark_devices_offline<M>(mongo: &M, outbound: &MessageOutboundFacade) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let expired = Utc::now() - Duration::minutes(5);
+    let expired = Utc::now() - Duration::minutes(1);
 
     let filtre = doc! {
         "connecte": true,
