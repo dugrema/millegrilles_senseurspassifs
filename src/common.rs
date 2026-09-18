@@ -29,12 +29,12 @@ pub const EVENEMENT_MAJ_DISPLAYS: &str = "evenementMajDisplays";
 pub const EVENEMENT_MAJ_PROGRAMMES: &str = "evenementMajProgrammes";
 pub const EVENEMENT_PRESENCE_APPAREIL: &str = "presenceAppareil";
 
-pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
-pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
-pub const COMMANDE_SIGNER_APPAREIL: &str = "signerAppareil";
-pub const COMMANDE_CONFIRMER_RELAI: &str = "confirmerRelai";
-pub const COMMANDE_RESET_CERTIFICATS: &str = "resetCertificatsAppareils";
-pub const COMMAND_DISCONNECT_RELAY: &str = "disconnectRelay";
+// pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
+// pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
+// pub const COMMANDE_SIGNER_APPAREIL: &str = "signerAppareil";
+// pub const COMMANDE_CONFIRMER_RELAI: &str = "confirmerRelai";
+// pub const COMMANDE_RESET_CERTIFICATS: &str = "resetCertificatsAppareils";
+// pub const COMMAND_DISCONNECT_RELAY: &str = "disconnectRelay";
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";

@@ -2,14 +2,15 @@ use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
-use millegrilles_common_rust::mongo_dao::MongoDaoTyped;
+use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::tracing::info;
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::models::ErrorMessage;
+use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use crate::common::*;
-use crate::models::{DocAppareil, ReponseAppareilUsager, ReponseAppareilsUsager, ReponseGetUserConfiguration, RequestGetUserConfiguration, RowCollectionUsager};
+use crate::models::{DocAppareil, GeopositionAppareil, InformationAppareil, ReponseAppareilUsager, ReponseAppareilsUsager, ReponseGetUserConfiguration, RequestGetUserConfiguration, RowCollectionUsager};
 
 pub const REQUETE_GET_APPAREILS_USAGER: &str = "getAppareilsUsager";
 pub const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
@@ -110,4 +111,59 @@ pub async fn get_user_configuration<M>(
             outbound.respond(wrapper.delivery_info, ErrorMessage::err_code(404, "Unknown user_id")).await
         }
     }
+}
+
+#[derive(Deserialize)]
+struct RequeteGetTimezoneAppareil {
+    user_id: String,
+    uuid_appareil: String
+}
+
+#[derive(Serialize)]
+struct ReponseGetTimezoneAppareil {
+    ok: bool,
+    err: Option<String>,
+    timezone: Option<String>,
+    geoposition: Option<GeopositionAppareil>,
+}
+
+pub async fn get_device_timezone<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+
+    let request: RequeteGetTimezoneAppareil = wrapper.message.deserialize()?;
+
+    let device_collection = mongo.get_collection_typed::<InformationAppareil>(COLLECTIONS_APPAREILS)?;
+    let filtre = doc! {CHAMP_USER_ID: &request.user_id, CHAMP_UUID_APPAREIL: &request.uuid_appareil};
+    let device_info = match device_collection.find_one(filtre).await? {
+        Some(device_info) => device_info,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Unknown device for user")).await
+    };
+
+    // Locate device timezone
+    let (timezone, geoposition) = match device_info.configuration {
+        Some(configuration) => (configuration.timezone, configuration.geoposition),
+        None => (None, None)
+    };
+    let timezone = match timezone {
+        Some(inner) => Some(inner),
+        None => {
+            // Tenter de charger la timezone du compte usager
+            let collection = mongo.get_collection_typed::<RowCollectionUsager>(COLLECTIONS_USAGER)?;
+            let filtre = doc! { CHAMP_USER_ID: &request.user_id };
+            match collection.find_one(filtre).await? {
+                Some(inner) => inner.timezone,
+                None => None
+            }
+        }
+    };
+
+    outbound.respond(wrapper.delivery_info, ReponseGetTimezoneAppareil {
+        ok: true,
+        err: None,
+        timezone,
+        geoposition
+    }).await
 }

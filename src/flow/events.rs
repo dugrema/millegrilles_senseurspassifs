@@ -1,0 +1,1 @@
+pub const EVENEMENT_PRESENCE_APPAREIL: &str = "presenceAppareil";

@@ -20,8 +20,10 @@ use crate::external::mongo::create_index_mongodb;
 use crate::external::mq::{init_queues, QUEUE_TICKER, QUEUE_REQUESTS, QUEUE_REPORTS, QUEUE_DEVICE_REQUESTS, QUEUE_COMMANDS, QUEUE_TRANSACTIONS, QUEUE_READINGS};
 use crate::flow::readings::process_reading_event;
 use crate::flow::requests::*;
+use crate::flow::commands::*;
+use crate::flow::events::*;
+use crate::flow::transactions::*;
 use crate::flow::requests_reports::send_device_report;
-use crate::flow::transactions::SenseursPassifsTransactionService;
 
 pub struct ApplicationService {
     pki: Arc<dyn PkiService>,
@@ -375,7 +377,7 @@ async fn process_report(
 }
 
 async fn process_device_request<M>(
-    _mongo: &M,
+    mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
@@ -387,7 +389,7 @@ async fn process_device_request<M>(
         None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
     };
     match action {
-        REQUETE_GET_TIMEZONE_APPAREIL => todo!(),
+        REQUETE_GET_TIMEZONE_APPAREIL => get_device_timezone(mongo, outbound, wrapper).await,
         _ => {
             info!("Unknown action {} for process_request, skipping", action);
             Ok(())
@@ -407,7 +409,19 @@ async fn process_command<M>(
         },
         None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in command")).await
     };
-    todo!()
+    match action {
+        COMMANDE_INSCRIRE_APPAREIL => todo!(),
+        COMMANDE_CHALLENGE_APPAREIL => todo!(),
+        COMMANDE_SIGNER_APPAREIL => todo!(),
+        COMMANDE_CONFIRMER_RELAI => todo!(),
+        COMMANDE_RESET_CERTIFICATS => todo!(),
+        COMMAND_DISCONNECT_RELAY => todo!(),
+        EVENEMENT_PRESENCE_APPAREIL => todo!(),
+        _ => {
+            info!("Unknown action {} for process_command, skipping", action);
+            Ok(())
+        }
+    }
 }
 
 async fn process_transaction<M>(
