@@ -1,19 +1,23 @@
+use std::cmp::max;
 use crate::common::*;
-use crate::models::{InformationAppareil, LectureAppareil, LectureAppareilInfo};
-use millegrilles_common_rust::bson;
+use crate::models::{InformationAppareil, LectureAppareil, LectureAppareilInfo, LecturesCumulees, TransactionLectureHoraire};
+use millegrilles_common_rust::{bson, serde_json};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
-use millegrilles_common_rust::chrono::{DateTime, Timelike, Utc};
+use millegrilles_common_rust::chrono::{DateTime, Duration, Timelike, Utc};
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
+use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::tracing::{debug, warn};
-use millegrilles_common_rust::v3::PkiService;
+use millegrilles_common_rust::v3::{PkiService, TransactionService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
+use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
+use crate::flow::transactions::SenseursPassifsTransactionService;
 
 pub async fn process_reading_event<M>(
     pki: &dyn PkiService,
@@ -282,4 +286,174 @@ fn heure_juste(date: &DateTime<Utc>) -> DateTime<Utc> {
     date.with_minute(0).expect("with_minutes")
         .with_second(0).expect("with_seconds")
         .with_nanosecond(0).expect("with_nanosecond")
+}
+
+/// Concatenates all readings by hour and saves them permanently as transactions.
+pub async fn generate_readings_for_transactions<M>(
+    mongo: &M,
+    transaction: &SenseursPassifsTransactionService,
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    // Donner 5 minutes apres l'heure pour completer traitement des evenements/lectures (65 minutes).
+    let date_aggregation = Utc::now() - Duration::minutes(65);
+
+    let filtre = doc! {
+        "heure": {"$lte": date_aggregation},
+    };
+
+    let mut session = mongo.get_session().await?;
+    session.start_transaction().await?;
+
+    let collection = mongo.get_collection_typed::<LecturesCumulees>(COLLECTIONS_LECTURES)?;
+    let mut curseur = collection.find(filtre).session(&mut session).await?;
+    while let Some(row) = curseur.next(&mut session).await {
+        if let Err(e) = generate_reading_transactions(mongo, transaction, row?, &mut session).await {
+            session.abort_transaction().await?;
+            return Err(e);
+        }
+    }
+    session.commit_transaction().await?;
+
+    Ok(())
+}
+
+async fn generate_reading_transactions<M>(
+    mongo: &M,
+    transaction: &SenseursPassifsTransactionService,
+    readings: LecturesCumulees,
+    session: &mut ClientSession,
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+
+    debug!("Generate transaction readings for hour before {:?} for user_id {}, appareil : {}, senseur_id : {}",
+            readings.heure, readings.user_id, readings.uuid_appareil, readings.senseur_id);
+
+    let hour = readings.heure;
+    debug!("Hour : {:?}", hour);
+
+    let stats = calculate_average(&readings)?;
+
+    let transaction_value = TransactionLectureHoraire {
+        heure: hour,
+        user_id: readings.user_id.clone(),
+        uuid_appareil: readings.uuid_appareil.clone(),
+        senseur_id: readings.senseur_id.clone(),
+        lectures: readings.lectures.clone(),
+        min: stats.min,
+        max: stats.max,
+        avg: stats.avg,
+    };
+
+    transaction.process_value(
+        DOMAINE_NOM,
+        TRANSACTION_SENSEUR_HORAIRE,
+        serde_json::to_value(transaction_value)?,
+        Some(session)
+    ).await?;
+
+    cleanup_readings_for_device(mongo, &readings, &hour, session).await?;
+
+    Ok(())
+
+    //
+    //     debug!("Soumettre transaction : {:?}", transaction);
+    //     match sauvegarder_traiter_transaction_serializable_v2(
+    //         middleware, &transaction, gestionnaire, session, DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE).await
+    //     {
+    //         Ok(_) => {
+    //             // Cleanup table lectures
+    //             // let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
+    //             let filtre = doc! {
+    //                 CHAMP_USER_ID: &transaction.user_id,
+    //                 CHAMP_UUID_APPAREIL: &transaction.uuid_appareil,
+    //                 "senseur_id": &transaction.senseur_id,
+    //                 "heure": &transaction.heure,
+    //             };
+    //
+    //             // debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
+    //             debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}", filtre);
+    //             let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
+    //             match collection.delete_one(filtre).await {
+    //                 Ok(r) => {
+    //                     debug!("transactions.transaction_senseur_horaire Resultat suppression lectures archivess : {:?}", r);
+    //                 }
+    //                 Err(e) => warn!("transactions.transaction_senseur_horaire Erreur suppression lectures {:?}", e)
+    //             }
+    //         },
+    //         Err(e) => {
+    //             error!("generer_transactions Erreur traitemnet transaction {:?}", e)
+    //         }
+    //     }
+}
+
+struct BasicStats {
+    max: Option<f64>,
+    min: Option<f64>,
+    avg: Option<f64>,
+    count: usize,
+}
+
+impl BasicStats {
+    fn new() -> Self { Self { max: None, min: None, avg: None, count: 0 } }
+}
+
+fn calculate_average(readings: &LecturesCumulees) -> Result<BasicStats, CommonError> {
+    let mut stats = BasicStats::new();
+
+    // Calcul de moyenne
+    let mut val_somme: f64 = 0.0;
+    let mut fract_max: u8 = 0 ;  // Nombre de digits dans partie fractionnaire (pour round avg)
+
+    for lecture in &readings.lectures {
+        if let Some(valeur) = lecture.valeur {
+
+            fract_max = max(fract_max, compter_fract_digits(valeur));
+
+            // Calcul moyenne
+            stats.count += 1;
+            val_somme += valeur;
+
+            // Max
+            match stats.max {
+                Some(v) => {
+                    if v < valeur {
+                        stats.max = Some(valeur);  // Remplacer max
+                    }
+                },
+                None => stats.max = Some(valeur),
+            }
+
+            // Min
+            match stats.min {
+                Some(v) => {
+                    if v > valeur {
+                        stats.min = Some(valeur);  // Remplacer min
+                    }
+                },
+                None => stats.min = Some(valeur)
+            }
+        }
+    }
+
+    if stats.count > 0 {
+        let moyenne = val_somme / stats.count as f64;
+        stats.avg = Some(arrondir(moyenne, fract_max as i32));
+    }
+
+    Ok(stats)
+}
+
+async fn cleanup_readings_for_device(
+    mongo: &dyn MongoDao,
+    readings: &LecturesCumulees,
+    hour: &DateTime<Utc>,
+    session: &mut ClientSession
+) -> Result<(), CommonError> {
+    let filtre = doc! {
+        CHAMP_USER_ID: readings.user_id.as_str(),
+        CHAMP_UUID_APPAREIL: readings.uuid_appareil.as_str(),
+        "senseur_id": readings.senseur_id.as_str(),
+        "heure": &hour,
+    };
+    let collection = mongo.get_collection(COLLECTIONS_LECTURES)?;
+    collection.delete_one(filtre).session(session).await?;
+    Ok(())
 }

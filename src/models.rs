@@ -295,3 +295,37 @@ pub struct ResultatStatistiquesSenseurRow {
     pub max: Option<f64>,
     pub avg: Option<f64>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct EvenementPresenceAppareilUser {
+    pub uuid_appareil: String,
+    pub user_id: String,
+    pub version: Option<String>,
+    pub connecte: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LecturesCumulees {
+    pub user_id: String,
+    #[serde(
+        serialize_with = "epochseconds::serialize",
+        deserialize_with = "FromChrono04DateTime::deserialize"
+    )]
+    pub heure: DateTime<Utc>,
+    pub uuid_appareil: String,
+    pub senseur_id: String,
+    pub lectures: Vec<LectureSenseur>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionLectureHoraire {
+    #[serde(with="epochseconds")]
+    pub heure: DateTime<Utc>,
+    pub user_id: String,
+    pub uuid_appareil: String,
+    pub senseur_id: String,
+    pub lectures: Vec<LectureSenseur>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub avg: Option<f64>,
+}

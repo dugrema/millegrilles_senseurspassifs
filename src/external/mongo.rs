@@ -1,7 +1,7 @@
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::configuration::ConfigMessages;
 use millegrilles_common_rust::constantes::{FIELD_BID, FIELD_DATE_PROCESSED, FIELD_PROCESSED, INDEX_BID, INDEX_DATE_PROCESSED, TRANSACTION_CHAMP_ID};
-use millegrilles_common_rust::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
+use millegrilles_common_rust::mongo_dao::{ChampIndex, IndexOptions, MongoDao, MongoDaoTyped};
 use crate::common::{CHAMP_DERNIERE_LECTURE, CHAMP_HEURE, CHAMP_PRESENT, CHAMP_SENSEUR_ID, CHAMP_USER_ID, CHAMP_UUID_APPAREIL, COLLECTIONS_APPAREILS, COLLECTIONS_LECTURES, COLLECTIONS_NOTIFICATIONS_USAGERS, COLLECTIONS_RELAIS, COLLECTIONS_SENSEURS_HORAIRE, INDEX_APPAREILS_DERNIERE_LECTURE, INDEX_LECTURES_HORAIRE, INDEX_LECTURES_HORAIRE_RAPPORT, INDEX_LECTURES_SENSEURS, INDEX_USER_APPAREILS, INDEX_USER_APPAREIL_RELAIS, INDEX_USER_NOTIFICATIONS};
 
 pub const COLLECTION_NAME_REDOLOG: &str = "SenseursPassifs/redolog";

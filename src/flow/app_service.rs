@@ -18,10 +18,11 @@ use millegrilles_common_rust::v3::{PkiService, PresenceService};
 use crate::common::{DOMAINE_NOM, EVENEMENT_LECTURE, ROLE_RELAI_NOM};
 use crate::external::mongo::create_index_mongodb;
 use crate::external::mq::{init_queues, QUEUE_TICKER, QUEUE_REQUESTS, QUEUE_REPORTS, QUEUE_DEVICE_REQUESTS, QUEUE_COMMANDS, QUEUE_TRANSACTIONS, QUEUE_READINGS};
-use crate::flow::readings::process_reading_event;
+use crate::flow::readings::{generate_readings_for_transactions, process_reading_event};
 use crate::flow::requests::*;
 use crate::flow::commands::*;
 use crate::flow::events::*;
+use crate::flow::maintenance::mark_devices_offline;
 use crate::flow::transactions::*;
 use crate::flow::requests_reports::send_device_report;
 
@@ -97,6 +98,7 @@ impl ApplicationService {
                     if let Err(e) = process_ticker_job(
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
+                        self.transaction.as_ref(),
                         message
                     ).await {
                         error!("Ticker job failed: {}", e);
@@ -264,8 +266,9 @@ impl ApplicationService {
 }
 
 async fn process_ticker_job<M>(
-    _mongo: &M,
-    presence: &dyn PresenceService,
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    transaction: &SenseursPassifsTransactionService,
     trigger: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped
 {
@@ -284,24 +287,24 @@ async fn process_ticker_job<M>(
     debug!("ticker_job_ca for h:{} m:{}",hour,minute);
 
     // Emit domain presence
-    if let Err(e) = presence.emit_domain_presence(DOMAINE_NOM, None).await {
+    if let Err(e) = outbound.emit_domain_presence(DOMAINE_NOM, None).await {
         warn!("Error emitting domain presence: {}", e);
     }
 
-    //         // Faire l'aggretation des lectures
-    //         // Va chercher toutes les lectures non traitees de l'heure precedente (-65 minutes)
-    //         if minute % 15 == 5 {
-    //             if let Err(e) = generer_transactions_lectures_horaires(middleware, self).await {
-    //                 error!("traiter_cedule Erreur generer_transactions : {:?}", e);
-    //             }
-    //         }
-    //
-    //         if minute % 5 == 3 {
-    //             if let Err(e) = mark_devices_offline(middleware).await {
-    //                 error!("traiter_cedule Error mark_devices_offline : {:?}", e);
-    //             }
-    //         }
-    //
+    if minute % 1 == 0 {
+        if let Err(e) = mark_devices_offline(mongo, outbound).await {
+            error!("Error mark_devices_offline : {:?}", e);
+        }
+    }
+
+    // if minute % 10 == 2 {
+    {
+        // Aggregate readings into transactions
+        if let Err(e) = generate_readings_for_transactions(mongo, transaction).await {
+            error!("Error generating readings transactions: {:?}", e);
+        }
+    }
+
     //         if minute == 28 && heure % 12 == 4 {
     //             if let Err(e) = maintain_device_certificates(middleware).await {
     //                 error!("traiter_cedule Error maintain_device_certificates : {:?}", e);
