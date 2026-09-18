@@ -1,4 +1,5 @@
 use crate::common::{ParametresDisplay, ProgrammeAppareil};
+use millegrilles_common_rust::bson::serde_helpers::datetime::FromChrono04DateTime;
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{epochseconds, optionepochseconds};
 use millegrilles_common_rust::mongo_serde::option_chrono_04_datetime;
@@ -271,4 +272,26 @@ pub struct InformationAppareil {
     pub connecte: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RequeteGetStatistiquesSenseur {
+    pub uuid_appareil: String,
+    pub senseur_id: String,
+    pub timezone: Option<String>,
+    pub custom_grouping: Option<String>,
+    pub custom_intervalle_min: Option<usize>,
+    pub custom_intervalle_max: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResultatStatistiquesSenseurRow {
+    #[serde(
+        serialize_with = "epochseconds::serialize",
+        deserialize_with = "FromChrono04DateTime::deserialize"
+    )]
+    pub heure: DateTime<Utc>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub avg: Option<f64>,
 }

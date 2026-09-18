@@ -2,7 +2,7 @@ use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
-use millegrilles_common_rust::mongo_dao::{MongoDaoImpl, MongoDaoTyped};
+use millegrilles_common_rust::mongo_dao::MongoDaoTyped;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::tracing::info;
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;

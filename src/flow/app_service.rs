@@ -4,7 +4,7 @@ use millegrilles_common_rust::chrono::{Datelike, Duration, Timelike, Utc};
 use millegrilles_common_rust::constantes::Securite;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
-use millegrilles_common_rust::mongo_dao::{MongoDaoImpl, MongoDaoTyped};
+use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use millegrilles_common_rust::tokio;
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_stream::StreamExt;
@@ -20,6 +20,7 @@ use crate::external::mongo::create_index_mongodb;
 use crate::external::mq::{init_queues, QUEUE_TICKER, QUEUE_REQUESTS, QUEUE_REPORTS, QUEUE_DEVICE_REQUESTS, QUEUE_COMMANDS, QUEUE_TRANSACTIONS, QUEUE_READINGS};
 use crate::flow::readings::process_reading_event;
 use crate::flow::requests::*;
+use crate::flow::requests_reports::send_device_report;
 use crate::flow::transactions::SenseursPassifsTransactionService;
 
 pub struct ApplicationService {
@@ -352,11 +353,11 @@ async fn process_request<M>(
     }
 }
 
-async fn process_report<M>(
-    _mongo: &M,
+async fn process_report(
+    mongo: &dyn MongoDao,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
-) -> Result<(), CommonError> where M: MongoDaoTyped {
+) -> Result<(), CommonError> {
     let action = match wrapper.message.routage.as_ref() {
         Some(routing) => match routing.action.as_ref() {
             Some(action) => action.as_str(),
@@ -365,7 +366,7 @@ async fn process_report<M>(
         None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
     };
     match action {
-        REQUETE_GET_STATISTIQUES_SENSEUR => todo!(),
+        REQUETE_GET_STATISTIQUES_SENSEUR => send_device_report(mongo, outbound, wrapper).await,
         _ => {
             info!("Unknown action {} for process_request, skipping", action);
             Ok(())
