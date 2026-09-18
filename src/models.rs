@@ -329,3 +329,9 @@ pub struct TransactionLectureHoraire {
     pub max: Option<f64>,
     pub avg: Option<f64>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionMajAppareil {
+    pub uuid_appareil: String,
+    pub configuration: ConfigurationAppareil,
+}

@@ -17,7 +17,7 @@ use millegrilles_common_rust::v3::{PkiService, TransactionService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
-use crate::flow::transactions::SenseursPassifsTransactionService;
+use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_SENSEUR_HORAIRE};
 
 pub async fn process_reading_event<M>(
     pki: &dyn PkiService,

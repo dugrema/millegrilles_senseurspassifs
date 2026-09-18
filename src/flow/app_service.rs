@@ -224,6 +224,7 @@ impl ApplicationService {
                     if let Err(e) = process_transaction(
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
+                        self.transaction.as_ref(),
                         message
                     ).await {
                         error!("Transaction job failed: {}", e);
@@ -334,12 +335,9 @@ async fn process_request<M>(
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let action = match wrapper.message.routage.as_ref() {
-        Some(routing) => match routing.action.as_ref() {
-            Some(action) => action.as_str(),
-            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
-        },
-        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
     };
     match action {
         REQUETE_GET_APPAREILS_USAGER => get_user_devices(mongo, outbound, wrapper).await,
@@ -363,12 +361,9 @@ async fn process_report(
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> {
-    let action = match wrapper.message.routage.as_ref() {
-        Some(routing) => match routing.action.as_ref() {
-            Some(action) => action.as_str(),
-            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
-        },
-        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
     };
     match action {
         REQUETE_GET_STATISTIQUES_SENSEUR => send_device_report(mongo, outbound, wrapper).await,
@@ -384,12 +379,9 @@ async fn process_device_request<M>(
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let action = match wrapper.message.routage.as_ref() {
-        Some(routing) => match routing.action.as_ref() {
-            Some(action) => action.as_str(),
-            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
-        },
-        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in request")).await
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
     };
     match action {
         REQUETE_GET_TIMEZONE_APPAREIL => get_device_timezone(mongo, outbound, wrapper).await,
@@ -405,13 +397,11 @@ async fn process_command<M>(
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let action = match wrapper.message.routage.as_ref() {
-        Some(routing) => match routing.action.as_ref() {
-            Some(action) => action.as_str(),
-            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
-        },
-        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in command")).await
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
     };
+
     match action {
         COMMANDE_INSCRIRE_APPAREIL => todo!(),
         COMMANDE_CHALLENGE_APPAREIL => todo!(),
@@ -428,18 +418,31 @@ async fn process_command<M>(
 }
 
 async fn process_transaction<M>(
-    _mongo: &M,
+    mongo: &M,
     outbound: &MessageOutboundFacade,
+    transaction: &SenseursPassifsTransactionService,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let action = match wrapper.message.routage.as_ref() {
-        Some(routing) => match routing.action.as_ref() {
-            Some(action) => action.as_str(),
-            None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
-        },
-        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No routing provided in command")).await
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
     };
-    todo!()
+    match action {
+        TRANSACTION_LECTURE => todo!(),
+        TRANSACTION_MAJ_SENSEUR => todo!(),
+        TRANSACTION_MAJ_NOEUD => todo!(),
+        TRANSACTION_SUPPRESSION_SENSEUR => todo!(),
+        TRANSACTION_MAJ_APPAREIL => update_device_command(mongo, outbound, transaction, wrapper).await,
+        TRANSACTION_SAUVEGARDER_PROGRAMME => todo!(),
+        TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
+        TRANSACTION_APPAREIL_RESTAURER => todo!(),
+        TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
+        TRANSACTION_SHOW_HIDE_SENSOR => todo!(),
+        _ => {
+            info!("Unknown action {} for process_transaction, skipping", action);
+            Ok(())
+        }
+    }
 }
 
 async fn process_reading<M>(
@@ -448,16 +451,10 @@ async fn process_reading<M>(
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let action = match wrapper.message.routage.as_ref() {
-        Some(routing) => match routing.action.as_ref() {
-            Some(action) => action.as_str(),
-            None => {
-                debug!("No action provided in event {}, skipped", wrapper.message.id);
-                return Ok(())
-            },
-        },
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
         None => {
-            debug!("No routing provided in event {}, skipped", wrapper.message.id);
+            debug!("No action provided in event {}, skipped", wrapper.message.id);
             return Ok(())
         }
     };
