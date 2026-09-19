@@ -20,6 +20,7 @@ use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use std::sync::Arc;
 
+/// Handles queue consumer threads, calls individual routing methods
 pub struct ApplicationService {
     pki: Arc<dyn PkiService>,
     outbound: Arc<MessageOutboundFacade>,

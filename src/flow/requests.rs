@@ -35,14 +35,17 @@ pub async fn process_request<M>(
     };
     match action {
         REQUETE_GET_APPAREILS_USAGER => get_user_devices(mongo, outbound, wrapper).await,
-        REQUETE_LISTE_NOEUDS => todo!(),
-        REQUETE_GET_NOEUD => todo!(),
-        REQUETE_LISTE_SENSEURS_PAR_UUID => todo!(),
-        REQUETE_LISTE_SENSEURS_NOEUD => todo!(),
-        REQUETE_GET_APPAREILS_EN_ATTENTE => todo!(),
         REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => get_device_display_configuration(mongo, outbound, wrapper).await,
         REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => get_device_program_configuration(mongo, outbound, wrapper).await,
         REQUETE_GET_CONFIGURATION_USAGER => get_user_configuration(mongo, outbound, wrapper).await,
+
+        // Obsolete
+        REQUETE_LISTE_NOEUDS => outbound.respond(wrapper.delivery_info, ErrorMessage::err("listeNoeuds is obsolete")).await,
+        REQUETE_GET_NOEUD => outbound.respond(wrapper.delivery_info, ErrorMessage::err("getNoeuds is obsolete")).await,
+        REQUETE_LISTE_SENSEURS_PAR_UUID => outbound.respond(wrapper.delivery_info, ErrorMessage::err("listeSenseursParUuid is obsolete")).await,
+        REQUETE_LISTE_SENSEURS_NOEUD => outbound.respond(wrapper.delivery_info, ErrorMessage::err("listeSenseursPourNoeud is obsolete")).await,
+        REQUETE_GET_APPAREILS_EN_ATTENTE => outbound.respond(wrapper.delivery_info, ErrorMessage::err("getAppareilsEnAttente is obsolete")).await,
+
         _ => {
             info!("Unknown action {} for process_request, skipping", action);
             Ok(())
