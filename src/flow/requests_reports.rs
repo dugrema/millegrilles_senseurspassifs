@@ -1,20 +1,39 @@
+use crate::common::COLLECTIONS_SENSEURS_HORAIRE;
+use crate::flow::requests::REQUETE_GET_STATISTIQUES_SENSEUR;
+use crate::models::{RequeteGetStatistiquesSenseur, ResultatStatistiquesSenseurRow};
 use chrono_tz::Tz;
-use millegrilles_common_rust::bson::{doc, Document};
+use millegrilles_common_rust::bson::{Document, doc};
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::chrono::{DateTime, Duration, Timelike, Utc};
 use millegrilles_common_rust::error::Error as CommonError;
-use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
+use millegrilles_common_rust::mongo_dao::MongoDao;
+use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::tracing::{debug, info};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::models::ErrorMessage;
 use millegrilles_common_rust::{bson, serde};
-use millegrilles_common_rust::tokio_stream::StreamExt;
 use serde::{Deserialize, Serialize};
-use crate::common::COLLECTIONS_SENSEURS_HORAIRE;
-use crate::models::{RequeteGetStatistiquesSenseur, ResultatStatistiquesSenseurRow};
 
-pub async fn send_device_report(
+pub async fn process_report(
+    mongo: &dyn MongoDao,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> {
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
+    };
+    match action {
+        REQUETE_GET_STATISTIQUES_SENSEUR => send_device_report(mongo, outbound, wrapper).await,
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
+}
+
+async fn send_device_report(
     mongo: &dyn MongoDao,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated

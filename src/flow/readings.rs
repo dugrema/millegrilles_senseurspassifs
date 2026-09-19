@@ -19,7 +19,37 @@ use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFaca
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
 use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_SENSEUR_HORAIRE};
 
-pub async fn process_reading_event<M>(
+pub async fn process_reading<M>(
+    pki: &dyn PkiService,
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => {
+            debug!("No action provided in event {}, skipped", wrapper.message.id);
+            return Ok(())
+        }
+    };
+
+    if ! wrapper.certificate.verifier_exchanges(vec![Securite::L2Prive])? &&
+        !wrapper.certificate.verifier_roles_string(vec![ROLE_RELAI_NOM.to_string()])?
+    {
+        debug!("Unauthorized message {} in process_reading, skipped", wrapper.message.id);
+        return Ok(())
+    }
+
+    match action {
+        EVENEMENT_LECTURE => process_reading_event(pki, mongo, outbound, wrapper).await,
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
+}
+
+async fn process_reading_event<M>(
     pki: &dyn PkiService,
     mongo: &M,
     outbound: &MessageOutboundFacade,

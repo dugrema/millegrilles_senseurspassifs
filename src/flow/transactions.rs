@@ -5,10 +5,11 @@ use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::bson;
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::chrono::Utc;
-use millegrilles_common_rust::mongo_dao::MongoDao;
+use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::mongodb::options::{UpdateOneModel, WriteModel};
 use millegrilles_common_rust::serde_json::Value;
+use millegrilles_common_rust::tracing::info;
 use millegrilles_common_rust::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
@@ -16,6 +17,7 @@ use millegrilles_common_rust::v3::impls::transaction_service::TransactionService
 use millegrilles_common_rust::v3::models::{BatchInsertions, ErrorMessage, TransactionOperationAggregator, TransactionWrapper};
 use crate::common::*;
 use crate::external::mongo::{COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
+use crate::flow::commands::update_device_command;
 use crate::models::{SenseurHoraireRow, TransactionLectureHoraire, TransactionMajAppareil};
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
@@ -30,6 +32,35 @@ pub const TRANSACTION_SENSEUR_HORAIRE: &str = "senseurHoraire";
 pub const TRANSACTION_APPAREIL_SUPPRIMER: &str = "supprimerAppareil";
 pub const TRANSACTION_APPAREIL_RESTAURER: &str = "restaurerAppareil";
 pub const TRANSACTION_MAJ_CONFIGURATION_USAGER: &str = "majConfigurationUsager";
+
+
+pub async fn process_transaction<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    transaction: &SenseursPassifsTransactionService,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
+    };
+    match action {
+        TRANSACTION_LECTURE => todo!(),
+        TRANSACTION_MAJ_SENSEUR => todo!(),
+        TRANSACTION_MAJ_NOEUD => todo!(),
+        TRANSACTION_SUPPRESSION_SENSEUR => todo!(),
+        TRANSACTION_MAJ_APPAREIL => update_device_command(mongo, outbound, transaction, wrapper).await,
+        TRANSACTION_SAUVEGARDER_PROGRAMME => todo!(),
+        TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
+        TRANSACTION_APPAREIL_RESTAURER => todo!(),
+        TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
+        TRANSACTION_SHOW_HIDE_SENSOR => todo!(),
+        _ => {
+            info!("Unknown action {} for process_transaction, skipping", action);
+            Ok(())
+        }
+    }
+}
 
 pub struct SenseursPassifsTransactionService {
     transactions: Box<dyn TransactionService>,

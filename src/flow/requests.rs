@@ -1,16 +1,16 @@
+use crate::common::*;
+use crate::models::{DocAppareil, GeopositionAppareil, InformationAppareil, ReponseAppareilUsager, ReponseAppareilsUsager, ReponseGetUserConfiguration, RequestGetUserConfiguration, RowCollectionUsager};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
-use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
+use millegrilles_common_rust::mongo_dao::MongoDaoTyped;
+use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::tokio_stream::StreamExt;
-use millegrilles_common_rust::tracing::{info, warn};
+use millegrilles_common_rust::tracing::info;
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::models::ErrorMessage;
-use millegrilles_common_rust::serde::{Deserialize, Serialize};
-use crate::common::*;
-use crate::models::{DocAppareil, GeopositionAppareil, InformationAppareil, ReponseAppareilUsager, ReponseAppareilsUsager, ReponseGetUserConfiguration, RequestGetUserConfiguration, RowCollectionUsager};
 
 pub const REQUETE_GET_APPAREILS_USAGER: &str = "getAppareilsUsager";
 pub const REQUETE_LISTE_NOEUDS: &str = "listeNoeuds";
@@ -24,7 +24,51 @@ pub const REQUETE_GET_STATISTIQUES_SENSEUR: &str = "getStatistiquesSenseur";
 pub const REQUETE_GET_CONFIGURATION_USAGER: &str = "getConfigurationUsager";
 pub const REQUETE_GET_TIMEZONE_APPAREIL: &str = "getTimezoneAppareil";
 
-pub async fn get_user_devices<M>(
+pub async fn process_request<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
+    };
+    match action {
+        REQUETE_GET_APPAREILS_USAGER => get_user_devices(mongo, outbound, wrapper).await,
+        REQUETE_LISTE_NOEUDS => todo!(),
+        REQUETE_GET_NOEUD => todo!(),
+        REQUETE_LISTE_SENSEURS_PAR_UUID => todo!(),
+        REQUETE_LISTE_SENSEURS_NOEUD => todo!(),
+        REQUETE_GET_APPAREILS_EN_ATTENTE => todo!(),
+        REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION => get_device_display_configuration(mongo, outbound, wrapper).await,
+        REQUETE_GET_APPAREIL_PROGRAMMES_CONFIGURATION => get_device_program_configuration(mongo, outbound, wrapper).await,
+        REQUETE_GET_CONFIGURATION_USAGER => get_user_configuration(mongo, outbound, wrapper).await,
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
+}
+
+pub async fn process_device_request<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in request")).await
+    };
+    match action {
+        REQUETE_GET_TIMEZONE_APPAREIL => get_device_timezone(mongo, outbound, wrapper).await,
+        _ => {
+            info!("Unknown action {} for process_request, skipping", action);
+            Ok(())
+        }
+    }
+}
+
+async fn get_user_devices<M>(
     mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
@@ -76,7 +120,7 @@ pub async fn get_user_devices<M>(
     outbound.respond(wrapper.delivery_info, response).await
 }
 
-pub async fn get_user_configuration<M>(
+async fn get_user_configuration<M>(
     mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
@@ -127,7 +171,7 @@ struct ReponseGetTimezoneAppareil {
     geoposition: Option<GeopositionAppareil>,
 }
 
-pub async fn get_device_timezone<M>(
+async fn get_device_timezone<M>(
     mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
@@ -174,7 +218,7 @@ struct ResponseGetDeviceDisplayConfiguration {
     display_configuration: DocAppareil,
 }
 
-pub async fn get_device_display_configuration<M>(
+async fn get_device_display_configuration<M>(
     mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
@@ -218,7 +262,7 @@ struct ResponseGetDeviceProgramConfiguration {
     ok: bool,
     programmes: DocAppareil,
 }
-pub async fn get_device_program_configuration<M>(
+async fn get_device_program_configuration<M>(
     mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated

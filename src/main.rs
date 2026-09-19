@@ -1,12 +1,11 @@
-// mod requetes;
 mod common;
+// mod requetes;
 // mod lectures;
 // mod transactions;
 // mod commandes;
 // mod evenements;
 // mod builder;
 // mod domain_manager;
-mod constants;
 // mod maintenance;
 pub mod external;
 pub mod flow;
