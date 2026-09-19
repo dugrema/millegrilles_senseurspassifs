@@ -2,11 +2,12 @@ use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::mongo_dao::MongoDao;
-use millegrilles_common_rust::tracing::warn;
+use millegrilles_common_rust::tracing::{error, warn};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
+use millegrilles_common_rust::v3::ChiffrageService;
 use crate::common::{COLLECTIONS_APPAREILS, ROLE_RELAI_NOM};
 use crate::models::{EvenementPresenceAppareil, EvenementPresenceAppareilUser};
 use crate::common::*;
@@ -68,5 +69,16 @@ pub async fn device_presence_event(
         outbound.emit_event(routage, &new_event).await?;
     }
 
+    Ok(())
+}
+
+pub fn receive_keymaster_certificate(
+    chiffrage: &dyn ChiffrageService,
+    wrapper: MessageValidated,
+) -> Result<(), CommonError> {
+    let keymaster_certificate = wrapper.certificate;
+    if let Err(e) = chiffrage.add_encryption_publickey(keymaster_certificate) {
+        error!("Keymaster certificate was rejected: {:?}", e);
+    }
     Ok(())
 }

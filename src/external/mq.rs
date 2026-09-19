@@ -1,4 +1,4 @@
-use millegrilles_common_rust::constantes::{Securite, COMMANDE_DECLENCHER_BACKUP, COMMANDE_GLOBAL_DECLENCHER_BACKUP, COMMANDE_REGENERER};
+use millegrilles_common_rust::constantes::{Securite, COMMANDE_DECLENCHER_BACKUP, COMMANDE_GLOBAL_DECLENCHER_BACKUP, COMMANDE_REGENERER, DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES};
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange};
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
@@ -86,6 +86,7 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, COMMAND_DISCONNECT_RELAY), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, EVENEMENT_PRESENCE_APPAREIL), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, EVENEMENT_PRESENCE_APPAREIL), exchange: Securite::L2Prive },
+                ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES), exchange: Securite::L1Public },
             ],
             ttl: Some(QUEUE_TTL_DEFAULT),
             durable: true,

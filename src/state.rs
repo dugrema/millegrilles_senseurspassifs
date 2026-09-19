@@ -86,6 +86,7 @@ impl AppContext {
 
         let app_service = Arc::new(ApplicationService::new(
             security.clone(),
+            security.clone(),
             outbound.clone(),
             transaction.clone(),
             mongo.clone(),

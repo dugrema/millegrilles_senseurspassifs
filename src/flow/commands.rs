@@ -1,5 +1,5 @@
 use crate::common::*;
-use crate::flow::events::device_presence_event;
+use crate::flow::events::{device_presence_event, receive_keymaster_certificate};
 use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_APPAREIL_RESTAURER, TRANSACTION_APPAREIL_SUPPRIMER, TRANSACTION_INIT_APPAREIL, TRANSACTION_MAJ_APPAREIL, TRANSACTION_MAJ_CONFIGURATION_USAGER, TRANSACTION_MAJ_NOEUD, TRANSACTION_MAJ_SENSEUR, TRANSACTION_SAUVEGARDER_PROGRAMME, TRANSACTION_SHOW_HIDE_SENSOR, TRANSACTION_SUPPRESSION_SENSEUR};
 use crate::models::{CommandeChallengeAppareil, CommandeInscrireAppareil, CommandeSignerAppareil, DocAppareil, EvenementPresenceAppareilUser, ReponseCertificat, TransactionInitialiserAppareil, TransactionMajAppareil, TransactionShowHideSensor};
 use millegrilles_common_rust::bson::doc;
@@ -17,7 +17,7 @@ use millegrilles_common_rust::tracing::{debug, error, info, warn};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::models::ErrorMessage;
-use millegrilles_common_rust::v3::{BackupService, PkiService, PresenceService};
+use millegrilles_common_rust::v3::{BackupService, ChiffrageService, PkiService, PresenceService};
 use millegrilles_common_rust::{bson, serde_json};
 use millegrilles_common_rust::common_messages::BackupEvent;
 use crate::external::mongo::COLLECTION_NAME_REDOLOG;
@@ -31,6 +31,7 @@ pub const COMMAND_DISCONNECT_RELAY: &str = "disconnectRelay";
 
 pub async fn process_command<M>(
     pki: &dyn PkiService,
+    chiffrage: &dyn ChiffrageService,
     mongo: &M,
     outbound: &MessageOutboundFacade,
     transaction: &SenseursPassifsTransactionService,
@@ -48,6 +49,7 @@ pub async fn process_command<M>(
         COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
         COMMAND_DISCONNECT_RELAY => disconnect_relay_command(mongo, outbound, wrapper).await,
         EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
+        REQUETE_CERT_MAITREDESCLES => receive_keymaster_certificate(chiffrage, wrapper),
 
         // Obsolete commands
         COMMANDE_RESET_CERTIFICATS => outbound.respond(wrapper.delivery_info, ErrorMessage::err("resetCertificatsAppareils command is obsolete")).await,

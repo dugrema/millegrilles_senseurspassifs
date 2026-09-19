@@ -12,7 +12,7 @@ use millegrilles_common_rust::mongo_dao::MongoDao;
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::mongodb::options::{UpdateOneModel, WriteModel};
 use millegrilles_common_rust::serde_json::Value;
-use millegrilles_common_rust::tracing::info;
+use millegrilles_common_rust::tracing::{info, warn};
 use millegrilles_common_rust::v3::impls::transaction_service::TransactionServiceImpl;
 use millegrilles_common_rust::v3::models::{BatchInsertions, TransactionOperationAggregator, TransactionWrapper};
 use millegrilles_common_rust::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
@@ -150,15 +150,20 @@ async fn update_device_transaction(
     mongo: &dyn MongoDao,
     wrapper: TransactionWrapper,
 ) -> Result<TransactionOperationAggregator, CommonError> {
-    let user_id = match wrapper.get_certificate_user_id() {
-        Some(user_id) => user_id,
-        None => return Err(CommonError::Str("Missing user_id from certificate"))
-    };
-
     // Deserialize, this validates the structure
+    info!("Maj appareil: {:?}", wrapper.message.contenu);
     let transaction_value: TransactionMajAppareil = wrapper.message.deserialize()?;
 
     let mut aggregator = TransactionOperationAggregator::new();
+
+    let user_id = match wrapper.get_certificate_user_id() {
+        Some(user_id) => user_id,
+        None => {
+            warn!("Old update_device_transaction with certificate missing user_id, skipping");
+            return Ok(aggregator);
+            // return Err(CommonError::Str("Missing user_id from certificate"))
+        }
+    };
 
     let mut set_ops = doc! {};
 
