@@ -70,7 +70,7 @@ pub async fn process_transaction<M>(
         TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
         TRANSACTION_APPAREIL_RESTAURER => todo!(),
         TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
-        TRANSACTION_SHOW_HIDE_SENSOR => show_hide_command(mongo, outbound, transaction, wrapper).await,
+        TRANSACTION_SHOW_HIDE_SENSOR => show_hide_sensor_command(mongo, outbound, transaction, wrapper).await,
         _ => {
             info!("Unknown action {} for process_transaction, skipping", action);
             Ok(())
@@ -213,7 +213,7 @@ pub async fn update_device_command<M>(
     outbound.respond(delivery_info, device).await
 }
 
-async fn show_hide_command<M>(
+async fn show_hide_sensor_command<M>(
     mongo: &M,
     outbound: &MessageOutboundFacade,
     transaction: &SenseursPassifsTransactionService,
