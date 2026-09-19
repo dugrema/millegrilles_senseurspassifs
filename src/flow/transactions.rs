@@ -15,6 +15,8 @@ use millegrilles_common_rust::v3::impls::transaction_service::TransactionService
 use millegrilles_common_rust::v3::models::{BatchInsertions, TransactionOperationAggregator, TransactionWrapper};
 use millegrilles_common_rust::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
 use std::sync::Arc;
+use millegrilles_common_rust::tracing::info;
+use crate::flow::transactions_legacy::lectures_transaction_legacy;
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -80,17 +82,25 @@ impl TransactionRouter for SenseursPassifsTransactionRouter {
             TRANSACTION_INIT_APPAREIL => init_device(self.mongo.as_ref(), wrapper).await,
 
             // Legacy
-            TRANSACTION_LECTURE => panic!("Obsolete"),
-            TRANSACTION_MAJ_SENSEUR => panic!("Obsolete"),
-            TRANSACTION_MAJ_NOEUD => panic!("Obsolete"),
-            TRANSACTION_SUPPRESSION_SENSEUR => panic!("Obsolete"),
-            TRANSACTION_APPAREIL_SUPPRIMER => panic!("Obsolete"),
-            TRANSACTION_APPAREIL_RESTAURER => panic!("Obsolete"),
-            TRANSACTION_MAJ_CONFIGURATION_USAGER => panic!("Obsolete"),
-            TRANSACTION_SAUVEGARDER_PROGRAMME => panic!("Obsolete"),
+            TRANSACTION_LECTURE => lectures_transaction_legacy(self.mongo.as_ref(), wrapper).await,
+
+            // Obsolete - ignored during restoration from backups
+            TRANSACTION_MAJ_NOEUD => ignore_transaction(wrapper),
+            TRANSACTION_MAJ_SENSEUR => ignore_transaction(wrapper),
+            TRANSACTION_SUPPRESSION_SENSEUR => ignore_transaction(wrapper),
+            TRANSACTION_APPAREIL_SUPPRIMER => ignore_transaction(wrapper),
+            TRANSACTION_APPAREIL_RESTAURER => ignore_transaction(wrapper),
+            TRANSACTION_MAJ_CONFIGURATION_USAGER => ignore_transaction(wrapper),
+            TRANSACTION_SAUVEGARDER_PROGRAMME => ignore_transaction(wrapper),
             _ => Err(CommonError::Str("Unknown transaction action"))
         }
     }
+}
+
+fn ignore_transaction(wrapper: TransactionWrapper) -> Result<TransactionOperationAggregator, CommonError> {
+    let action = wrapper.get_routing_action();
+    info!("Ignoring transaction action {:?}: id: {}, content: {}", action, wrapper.message.id, wrapper.message.contenu);
+    Ok(TransactionOperationAggregator::new())
 }
 
 async fn process_hourly_device_readings(

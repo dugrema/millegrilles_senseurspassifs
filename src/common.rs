@@ -124,12 +124,12 @@ impl TransactionMajNoeud {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LectureTransaction {
-    #[serde(with="epochseconds")]
-    pub timestamp: DateTime<Utc>,
-    pub valeur: f64,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct LectureTransaction {
+//     #[serde(with="epochseconds")]
+//     pub timestamp: DateTime<Utc>,
+//     pub valeur: f64,
+// }
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
 // pub struct InformationAppareil {
