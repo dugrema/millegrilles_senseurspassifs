@@ -320,7 +320,9 @@ impl ApplicationService {
 
         // Rebuild sensor devices (legacy readings/transactions)
         info!("Rebuilding device states from latest sensor readings");
+        let start_rebuild = Utc::now();
         rebuild_devices(self.mongo.as_ref()).await?;
+        info!("Sensor rebuild duration: {} ms", Utc::now().signed_duration_since(start_rebuild).num_milliseconds());
 
         Ok(result)
     }
