@@ -43,9 +43,11 @@ pub async fn process_command<M>(
         COMMANDE_CHALLENGE_APPAREIL => device_challenge_command(mongo, outbound, wrapper).await,
         COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, wrapper).await,
         COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
-        COMMANDE_RESET_CERTIFICATS => todo!(),
         COMMAND_DISCONNECT_RELAY => disconnect_relay_command(mongo, outbound, wrapper).await,
         EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
+
+        // Obsolete commands
+        COMMANDE_RESET_CERTIFICATS => outbound.respond(wrapper.delivery_info, ErrorMessage::err("resetCertificatsAppareils command is obsolete")).await,
         _ => {
             info!("Unknown action {} for process_command, skipping", action);
             Ok(())
@@ -69,7 +71,7 @@ pub async fn process_transaction<M>(
         TRANSACTION_MAJ_APPAREIL => update_device_command(mongo, outbound, transaction, wrapper).await,
         TRANSACTION_SHOW_HIDE_SENSOR => show_hide_sensor_command(mongo, outbound, transaction, wrapper).await,
 
-        // Obsolete commands
+        // Obsolete commands (legacy transactions)
         TRANSACTION_MAJ_SENSEUR => outbound.respond(wrapper.delivery_info, ErrorMessage::err("majSenseur is obsolete")).await,
         TRANSACTION_MAJ_NOEUD => outbound.respond(wrapper.delivery_info, ErrorMessage::err("majNoeud is obsolete")).await,
         TRANSACTION_SUPPRESSION_SENSEUR => outbound.respond(wrapper.delivery_info, ErrorMessage::err("suppressionSenseur is obsolete")).await,
