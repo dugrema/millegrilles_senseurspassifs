@@ -1,7 +1,7 @@
 use crate::common::DOMAINE_NOM;
 use crate::external::mongo::create_index_mongodb;
 use crate::external::mq::*;
-use crate::flow::commands::{process_command, process_transaction};
+use crate::flow::commands::{process_backup, process_command, process_transaction};
 use crate::flow::maintenance::process_ticker_job;
 use crate::flow::readings::process_reading;
 use crate::flow::requests::{process_device_request, process_request};
@@ -82,6 +82,10 @@ impl ApplicationService {
         let incoming_clone = incoming.clone();
         join_set.spawn(async move {self_clone.process_readings_thread(incoming_clone).await});
 
+        let self_clone = self.clone();
+        let incoming_clone = incoming.clone();
+        join_set.spawn(async move {self_clone.process_backup_thread(incoming_clone).await});
+        
         Ok(())
     }
 
@@ -252,6 +256,30 @@ impl ApplicationService {
                         self.pki.as_ref(),
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
+                        message
+                    ).await {
+                        error!("Reading job failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error processing reading message: {}", e);
+                }
+            }
+        }
+        debug!("process_readings_thread Closed");
+    }
+
+    async fn process_backup_thread(&self, incoming: Arc<MessageInboundValidator>) {
+        let streamer = incoming.consume_named_queue(
+            format!("{}/{}", DOMAINE_NOM, QUEUE_BACKUP).as_str(),
+        ).expect("Consumer streaming init failed");
+        tokio::pin!(streamer);
+        while let Some(result) = streamer.next().await {
+            match result {
+                Ok(message) => {
+                    if let Err(e) = process_backup(
+                        self.outbound.as_ref(),
+                        self.backup.as_ref(),
                         message
                     ).await {
                         error!("Reading job failed: {}", e);

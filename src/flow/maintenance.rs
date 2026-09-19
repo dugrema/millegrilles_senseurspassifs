@@ -15,7 +15,7 @@ use millegrilles_common_rust::tracing::{debug, error, info, warn};
 use millegrilles_common_rust::v3::{BackupService, PresenceService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
-use crate::external::mongo::{COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
+use crate::external::mongo::COLLECTION_NAME_REDOLOG;
 
 pub async fn process_ticker_job<M>(
     mongo: &M,
