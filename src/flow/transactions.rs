@@ -1,24 +1,20 @@
-use std::sync::Arc;
-use millegrilles_common_rust::constantes::*;
-use millegrilles_common_rust::error::Error as CommonError;
+use crate::common::*;
+use crate::external::mongo::{COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
+use crate::models::{SenseurHoraireRow, TransactionLectureHoraire, TransactionMajAppareil, TransactionShowHideSensor};
 use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::bson;
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::chrono::Utc;
-use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
+use millegrilles_common_rust::constantes::*;
+use millegrilles_common_rust::error::Error as CommonError;
+use millegrilles_common_rust::mongo_dao::MongoDao;
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::mongodb::options::{UpdateOneModel, WriteModel};
 use millegrilles_common_rust::serde_json::Value;
-use millegrilles_common_rust::tracing::info;
-use millegrilles_common_rust::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
-use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
-use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::impls::transaction_service::TransactionServiceImpl;
-use millegrilles_common_rust::v3::models::{BatchInsertions, ErrorMessage, TransactionOperationAggregator, TransactionWrapper};
-use crate::common::*;
-use crate::external::mongo::{COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
-use crate::flow::commands::update_device_command;
-use crate::models::{SenseurHoraireRow, TransactionLectureHoraire, TransactionMajAppareil, TransactionShowHideSensor};
+use millegrilles_common_rust::v3::models::{BatchInsertions, TransactionOperationAggregator, TransactionWrapper};
+use millegrilles_common_rust::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
+use std::sync::Arc;
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -126,7 +122,8 @@ async fn process_hourly_device_readings(
                 .update(ops)
                 .build()
         );
-        aggregator.unordered = Some(vec![update_model]);  // Duplicates are identical entries
+        // Can use unordered because duplicates are identical entries (ideally would be insert)
+        aggregator.unordered = Some(vec![update_model]);
     } else {
         // Normal operation, fail if duplicate entry is created
         aggregator.batch_insertion(BatchInsertions::new(

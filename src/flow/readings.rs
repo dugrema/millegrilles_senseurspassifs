@@ -1,23 +1,23 @@
-use std::cmp::max;
 use crate::common::*;
+use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_SENSEUR_HORAIRE};
 use crate::models::{InformationAppareil, LectureAppareil, LectureAppareilInfo, LecturesCumulees, TransactionLectureHoraire};
-use millegrilles_common_rust::{bson, serde_json};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::chrono::{DateTime, Duration, Timelike, Utc};
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
+use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::tracing::{debug, info, warn};
-use millegrilles_common_rust::v3::{PkiService, TransactionService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
-use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
-use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_SENSEUR_HORAIRE};
+use millegrilles_common_rust::v3::PkiService;
+use millegrilles_common_rust::{bson, serde_json};
+use std::cmp::max;
 
 pub async fn process_reading<M>(
     pki: &dyn PkiService,
@@ -83,61 +83,6 @@ async fn process_reading_event<M>(
 
     Ok(())
 }
-
-async fn produce_new_device_transaction(
-    mongo: &dyn MongoDao,
-    transaction: &SenseursPassifsTransactionService,
-    uuid_appareil: &str,
-    user_id: &str,
-) -> Result<(), CommonError> {
-
-    todo!()
-    //         let collection = middleware.get_collection(COLLECTIONS_APPAREILS)?;
-    //         let filtre = doc! {
-    //             CHAMP_USER_ID: &transaction_convertie.user_id,
-    //             CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
-    //         };
-    //         let mut ops = doc! {
-    //             "$setOnInsert": {
-    //                 CHAMP_USER_ID: &transaction_convertie.user_id,
-    //                 CHAMP_UUID_APPAREIL: &transaction_convertie.uuid_appareil,
-    //                 CHAMP_CREATION: Utc::now(),
-    //                 "present": false,
-    //             },
-    //             "$currentDate": {
-    //                 CHAMP_MODIFICATION: true,
-    //             },
-    //             "$addToSet": {
-    //                 CHAMP_LECTURES_DISPONIBLES: &transaction_convertie.senseur_id
-    //             }
-    //         };
-    //
-    //         // Detecter type de lectures (aucun si vide)
-    //         let mut type_donnees = None;
-    //         for l in &transaction_convertie.lectures {
-    //             type_donnees = Some(l.type_.clone());
-    //             break
-    //         }
-    //
-    //         if let Some(type_donnees) = type_donnees {
-    //             ops.insert("$set", doc!{
-    //                 format!("types_donnees.{}", transaction_convertie.senseur_id): type_donnees
-    //             });
-    //         }
-    //
-    //         // let options = UpdateOptions::builder().upsert(true).build();
-    //         if let Err(e) = collection
-    //             .update_one(filtre, ops)
-    //             .upsert(true)
-    //             .session(&mut *session)
-    //             .await
-    //         {
-    //             Err(format!("transactions.transaction_initialiser_appareil Erreur chargement collection : {:?}", e))?
-    //         }
-
-
-}
-
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EvenementLecture {
@@ -437,36 +382,6 @@ async fn generate_reading_transactions<M>(
     cleanup_readings_for_device(mongo, &readings, &hour, session).await?;
 
     Ok(())
-
-    //
-    //     debug!("Soumettre transaction : {:?}", transaction);
-    //     match sauvegarder_traiter_transaction_serializable_v2(
-    //         middleware, &transaction, gestionnaire, session, DOMAINE_NOM, TRANSACTION_SENSEUR_HORAIRE).await
-    //     {
-    //         Ok(_) => {
-    //             // Cleanup table lectures
-    //             // let heure_max = transaction_convertie.heure.get_datetime().to_owned() + chrono::Duration::hours(1);
-    //             let filtre = doc! {
-    //                 CHAMP_USER_ID: &transaction.user_id,
-    //                 CHAMP_UUID_APPAREIL: &transaction.uuid_appareil,
-    //                 "senseur_id": &transaction.senseur_id,
-    //                 "heure": &transaction.heure,
-    //             };
-    //
-    //             // debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}, ops {:?}", filtre, ops);
-    //             debug!("transaction_senseur_horaire nettoyage lectures filtre {:?}", filtre);
-    //             let collection = middleware.get_collection(COLLECTIONS_LECTURES)?;
-    //             match collection.delete_one(filtre).await {
-    //                 Ok(r) => {
-    //                     debug!("transactions.transaction_senseur_horaire Resultat suppression lectures archivess : {:?}", r);
-    //                 }
-    //                 Err(e) => warn!("transactions.transaction_senseur_horaire Erreur suppression lectures {:?}", e)
-    //             }
-    //         },
-    //         Err(e) => {
-    //             error!("generer_transactions Erreur traitemnet transaction {:?}", e)
-    //         }
-    //     }
 }
 
 struct BasicStats {
