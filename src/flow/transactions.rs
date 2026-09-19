@@ -1,5 +1,6 @@
 use crate::common::*;
 use crate::external::mongo::{COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
+use crate::flow::transactions_legacy::lectures_transaction_legacy;
 use crate::models::{SenseurHoraireRow, TransactionInitialiserAppareil, TransactionLectureHoraire, TransactionMajAppareil, TransactionShowHideSensor};
 use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::bson;
@@ -11,12 +12,11 @@ use millegrilles_common_rust::mongo_dao::MongoDao;
 use millegrilles_common_rust::mongodb::ClientSession;
 use millegrilles_common_rust::mongodb::options::{UpdateOneModel, WriteModel};
 use millegrilles_common_rust::serde_json::Value;
+use millegrilles_common_rust::tracing::info;
 use millegrilles_common_rust::v3::impls::transaction_service::TransactionServiceImpl;
 use millegrilles_common_rust::v3::models::{BatchInsertions, TransactionOperationAggregator, TransactionWrapper};
 use millegrilles_common_rust::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
 use std::sync::Arc;
-use millegrilles_common_rust::tracing::info;
-use crate::flow::transactions_legacy::lectures_transaction_legacy;
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -32,7 +32,7 @@ pub const TRANSACTION_APPAREIL_RESTAURER: &str = "restaurerAppareil";
 pub const TRANSACTION_MAJ_CONFIGURATION_USAGER: &str = "majConfigurationUsager";
 
 pub struct SenseursPassifsTransactionService {
-    transactions: Box<dyn TransactionService>,
+    pub transaction: Arc<dyn TransactionService>,
 }
 
 impl SenseursPassifsTransactionService {
@@ -51,15 +51,15 @@ impl SenseursPassifsTransactionService {
             Box::new(router),
         );
 
-        Self { transactions: Box::new(service) }
+        Self { transaction: Arc::new(service) }
     }
 
     pub async fn process_transaction(&self, wrapper: TransactionWrapper, session: Option<&mut ClientSession>) -> Result<(), CommonError> {
-        self.transactions.process_transaction(wrapper, session).await
+        self.transaction.process_transaction(wrapper, session).await
     }
 
     pub async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<(), CommonError> {
-        self.transactions.process_value(domain, action, value, session).await
+        self.transaction.process_value(domain, action, value, session).await
     }
 }
 

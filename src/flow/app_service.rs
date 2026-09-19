@@ -13,7 +13,7 @@ use millegrilles_common_rust::tokio;
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::tracing::{debug, error};
-use millegrilles_common_rust::v3::PkiService;
+use millegrilles_common_rust::v3::{BackupService, PkiService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageInboundValidator;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
@@ -26,6 +26,7 @@ pub struct ApplicationService {
     outbound: Arc<MessageOutboundFacade>,
     transaction: Arc<SenseursPassifsTransactionService>,
     mongo: Arc<MongoDaoImpl>,
+    backup: Arc<dyn BackupService>,
 }
 
 impl ApplicationService {
@@ -34,12 +35,14 @@ impl ApplicationService {
         outbound: Arc<MessageOutboundFacade>,
         transaction: Arc<SenseursPassifsTransactionService>,
         mongo: Arc<MongoDaoImpl>,
+        backup: Arc<dyn BackupService>,
     ) -> Self {
         Self {
             pki,
             outbound,
             transaction,
             mongo,
+            backup,
         }
     }
 
@@ -94,6 +97,7 @@ impl ApplicationService {
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
                         self.transaction.as_ref(),
+                        self.backup.as_ref(),
                         message
                     ).await {
                         error!("Ticker job failed: {}", e);

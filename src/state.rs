@@ -16,6 +16,9 @@ use millegrilles_common_rust::v3::impls::format_service::FormatServiceImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use millegrilles_common_rust::v3::impls::security_service::SecurityServiceImpl;
 use std::sync::Arc;
+use millegrilles_common_rust::v3::impls::backup_service::DomainBackupServiceImpl;
+use millegrilles_common_rust::v3::impls::filehost_service::FilehostServiceImpl;
+use crate::common::{COLLECTIONS_APPAREILS, COLLECTIONS_SENSEURS_HORAIRE};
 
 /// Composition object with services from common library
 pub struct AppContext {
@@ -55,7 +58,35 @@ impl AppContext {
             mongo.clone(),
         ));
 
-        let app_service = Arc::new(ApplicationService::new(security.clone(), outbound.clone(), transaction.clone(), mongo.clone()));
+        let filehost = Arc::new(FilehostServiceImpl::new(config.clone(), format.clone(), outbound.clone()));
+
+        // List data tables (exclusing redolog and tracking). They get truncated on restore (when not resuming).
+        let data_tables = vec![
+            COLLECTIONS_SENSEURS_HORAIRE.to_string(),
+            COLLECTIONS_APPAREILS.to_string(),
+            COLLECTIONS_SENSEURS_HORAIRE.to_string(),
+            // COLLECTIONS_LECTURES.to_string(),                // volatile until converted
+            // COLLECTIONS_RELAIS.to_string(),                  // volatile
+            // COLLECTIONS_NOTIFICATIONS_USAGERS.to_string(),   // volatile
+        ];
+        let backup = Arc::new(DomainBackupServiceImpl::new(
+            config.clone(),
+            security.clone(),
+            outbound.clone(),
+            security.clone(),
+            mongo.clone(),
+            transaction.transaction.clone(), // SenseursPassifsTransactionService is a wrapper
+            filehost.clone(),
+            data_tables
+        ));
+
+        let app_service = Arc::new(ApplicationService::new(
+            security.clone(),
+            outbound.clone(),
+            transaction.clone(),
+            mongo.clone(),
+            backup.clone(),
+        ));
 
         info!("Configure middleware resources : queues, index, tables, ...");
         app_service.configure(messaging.as_ref(), config.as_ref()).await?;
@@ -69,7 +100,6 @@ impl AppContext {
             app_service.clone(),
             shutdown_token.clone(),
         ).await?;
-
 
         Ok(AppContext {
             join_set,
