@@ -64,8 +64,8 @@ pub async fn process_ticker_job<M>(
     //             }
     //         }
 
-    // if minute % 30 == 4 {
-    {
+    if minute % 30 == 4 {
+    // {
         // Run complete backup once a week on Sunday at 7:04 UTC.
         // This concatenates all incremental files and rotates backup files. May produce final file.
         let complete = minute == 4 && hour == 7 && day == Weekday::Sun;

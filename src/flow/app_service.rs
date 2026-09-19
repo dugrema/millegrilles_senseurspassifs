@@ -1,5 +1,5 @@
 use crate::common::DOMAINE_NOM;
-use crate::external::mongo::create_index_mongodb;
+use crate::external::mongo::{create_index_mongodb, COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
 use crate::external::mq::*;
 use crate::flow::commands::{process_backup, process_command, process_transaction};
 use crate::flow::maintenance::process_ticker_job;
@@ -12,13 +12,16 @@ use millegrilles_common_rust::mongo_dao::MongoDaoImpl;
 use millegrilles_common_rust::tokio;
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_stream::StreamExt;
-use millegrilles_common_rust::tracing::{debug, error};
+use millegrilles_common_rust::tracing::{debug, error, info};
 use millegrilles_common_rust::v3::{BackupService, PkiService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageInboundValidator;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use std::sync::Arc;
+use millegrilles_common_rust::chrono::Utc;
+use millegrilles_common_rust::openssl::pkey::{PKey, Private};
+use millegrilles_common_rust::v3::impls::backup_restorer::RestorationState;
 
 /// Handles queue consumer threads, calls individual routing methods
 pub struct ApplicationService {
@@ -85,7 +88,7 @@ impl ApplicationService {
         let self_clone = self.clone();
         let incoming_clone = incoming.clone();
         join_set.spawn(async move {self_clone.process_backup_thread(incoming_clone).await});
-        
+
         Ok(())
     }
 
@@ -291,6 +294,30 @@ impl ApplicationService {
             }
         }
         debug!("process_readings_thread Closed");
+    }
+
+    pub async fn restore(
+        &self,
+        master_key: Option<&PKey<Private>>,
+        resume: bool,
+        version: Option<String>,
+    ) -> Result<RestorationState, CommonError> {
+        // Wait for reply q (certificate queries)
+        self.outbound.wait_ready(Some(20_000)).await?;
+
+        let start_time = Utc::now();
+        let result = self.backup.restore_domain(
+            DOMAINE_NOM,
+            COLLECTION_NAME_REDOLOG,
+            COLLECTION_NAME_TRACKING,
+            resume,
+            version,
+            master_key,
+        ).await?;
+        let duration = Utc::now() - start_time;
+        info!("restore_domain duration: {} ms", duration.num_milliseconds());
+
+        Ok(result)
     }
 
 }

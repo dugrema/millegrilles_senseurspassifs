@@ -12,22 +12,30 @@ pub mod flow;
 pub mod state;
 pub mod models;
 
+use std::path::Path;
 use crate::common::DOMAINE_NOM;
 use crate::state::AppContext;
-use millegrilles_common_rust::tracing::{info, warn};
+use millegrilles_common_rust::tracing::{debug, info, warn};
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::PresenceService;
 use millegrilles_common_rust::{rustls, tokio as tokio};
 use millegrilles_common_rust::{tracing_subscriber, tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt}};
+use clap::Parser;
+use clap_derive::Parser;
+use millegrilles_common_rust::millegrilles_cryptographie::x509::parse_encrypted_private_key;
+use millegrilles_common_rust::openssl::pkey::{PKey, Private};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
     init_resources();
 
+    let cli = Cli::parse();
+    let master_key = parse_ca_password(&cli);
+
     info!("Starting SenseursPassifs backend service");
 
     // Start the application by creating the context. This starts all threads and connections.
-    let mut context = AppContext::new().await.expect("AppContext::new");
+    let mut context = AppContext::new(&cli, master_key).await.expect("AppContext::new");
     let shutdown_token = context.shutdown_token.clone();
 
     let shutdown_signal = async {
@@ -83,6 +91,55 @@ async fn init_tasks(outbound: &MessageOutboundFacade) {
         Err(e) => {
             warn!("Error waiting for queues to be ready, not emitting inital domain presence: {:?}", e);
         }
+    }
+}
+
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Cli {
+    /// Enable restoration mode
+    #[arg(long)]
+    pub restore: bool,
+
+    /// Path to the master key file
+    #[arg(short, long)]
+    pub capath: Option<String>,
+}
+
+
+/// Handle the master key and password prompt
+fn parse_ca_password (cli: &Cli) -> Option<PKey<Private>> {
+    if ! cli.restore {
+        // No need to look at key path if not restoring
+        return None
+    }
+
+    // We return an Option containing the path and the password
+    if let Some(path) = cli.capath.as_ref() {
+        debug!("Master key path provided: {}", path);
+
+        // rpassword::prompt_password will hide the input as the user types
+        let password = match rpassword::prompt_password("Enter master key password: ") {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Failed to read password: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let private_key = match parse_encrypted_private_key(Path::new(&path), &password) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error loading private key: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        Some(private_key)
+    } else {
+        eprintln!("Restoring keymaster requires the CA key (param --capath)");
+        std::process::exit(1);
     }
 }
 

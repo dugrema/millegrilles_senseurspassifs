@@ -7,3 +7,4 @@ pub mod commands;
 pub mod requests_reports;
 pub mod events;
 pub mod maintenance;
+pub mod restore;

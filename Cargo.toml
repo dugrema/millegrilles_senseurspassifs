@@ -14,3 +14,8 @@ millegrilles_common_rust = { path = "/home/mathieu/RustroverProjects/millegrille
 # env_logger = "0.11.10"
 serde = { version = "1.0.228", features = ["derive"] }
 chrono-tz = "0.10.4"
+
+# CLI parsing for restore
+clap = "4.6.6"
+clap_derive = "4.6.4"
+rpassword = "7.5.4"

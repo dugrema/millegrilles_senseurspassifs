@@ -16,9 +16,12 @@ use millegrilles_common_rust::v3::impls::format_service::FormatServiceImpl;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
 use millegrilles_common_rust::v3::impls::security_service::SecurityServiceImpl;
 use std::sync::Arc;
+use millegrilles_common_rust::openssl::pkey::{PKey, Private};
 use millegrilles_common_rust::v3::impls::backup_service::DomainBackupServiceImpl;
 use millegrilles_common_rust::v3::impls::filehost_service::FilehostServiceImpl;
+use crate::Cli;
 use crate::common::{COLLECTIONS_APPAREILS, COLLECTIONS_SENSEURS_HORAIRE};
+use crate::flow::restore::restore_from_backup;
 
 /// Composition object with services from common library
 pub struct AppContext {
@@ -30,7 +33,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub async fn new() -> Result<Self, CommonError> {
+    pub async fn new(cli: &Cli, master_key: Option<PKey<Private>>) -> Result<Self, CommonError> {
         // Shutdown/cancel semantics
         let shutdown_token = CancellationToken::new();
         let mut join_set = JoinSet::new();
@@ -56,6 +59,7 @@ impl AppContext {
             config.clone(),
             format.clone(),
             mongo.clone(),
+            cli.restore,
         ));
 
         let filehost = Arc::new(FilehostServiceImpl::new(config.clone(), format.clone(), outbound.clone()));
@@ -99,6 +103,8 @@ impl AppContext {
             inbound.clone(),
             app_service.clone(),
             shutdown_token.clone(),
+            cli.restore,
+            master_key,
         ).await?;
 
         Ok(AppContext {
@@ -138,6 +144,8 @@ async fn start_threads(
     incoming: Arc<MessageInboundValidator>,
     app_service: Arc<ApplicationService>,
     shutdown_token: CancellationToken,
+    is_restoring: bool,
+    master_key: Option<PKey<Private>>,
 ) -> Result<(), CommonError> {
 
     // Connect to RabbitMQ (throws error on failure).
@@ -149,8 +157,20 @@ async fn start_threads(
     let shutdown_token_clone = shutdown_token.clone();
     join_set.spawn(async move { security.run(shutdown_token_clone).await });
 
-    // Spawn consumer threads
-    app_service.start(join_set, incoming.clone())?;
+    if ! is_restoring {
+        // Spawn consumer threads
+        app_service.start(join_set, incoming.clone())?;
+    } else {
+        let master_key = match master_key {
+            Some(key) => key,
+            None => panic!("Master key not provided for restoring, aborting")
+        };
+        info!("Not starting consumer threads - restoring from backup");
+        let shutdown_token_clone = shutdown_token.clone();
+        join_set.spawn(async move {
+            restore_from_backup(app_service, &master_key, shutdown_token_clone).await
+        });
+    }
 
     Ok(())
 }

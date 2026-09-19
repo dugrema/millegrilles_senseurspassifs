@@ -40,8 +40,9 @@ impl SenseursPassifsTransactionService {
         config: Arc<dyn ConfigService>,
         format: Arc<dyn FormatService>,
         mongo: Arc<dyn MongoDao>,
+        restoring: bool,
     ) -> Self {
-        let router = SenseursPassifsTransactionRouter { mongo: mongo.clone(), ignore_duplicates: false };
+        let router = SenseursPassifsTransactionRouter { mongo: mongo.clone(), ignore_duplicates: restoring };
         let service = TransactionServiceImpl::new(
             config,
             format,
