@@ -1,3 +1,4 @@
+use millegrilles_common_rust::bson;
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::chrono::{DateTime, Utc};
@@ -11,11 +12,12 @@ use millegrilles_common_rust::v3::models::ErrorMessage;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::optionepochseconds;
 use millegrilles_common_rust::serde_json::json;
-use millegrilles_common_rust::tracing::info;
+use millegrilles_common_rust::tracing::{debug, info};
+use millegrilles_common_rust::v3::PkiService;
 use crate::common::*;
 use crate::flow::events::device_presence_event;
 use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_APPAREIL_RESTAURER, TRANSACTION_APPAREIL_SUPPRIMER, TRANSACTION_MAJ_APPAREIL, TRANSACTION_MAJ_CONFIGURATION_USAGER, TRANSACTION_MAJ_NOEUD, TRANSACTION_MAJ_SENSEUR, TRANSACTION_SAUVEGARDER_PROGRAMME, TRANSACTION_SHOW_HIDE_SENSOR, TRANSACTION_SUPPRESSION_SENSEUR};
-use crate::models::{DocAppareil, TransactionMajAppareil, TransactionShowHideSensor};
+use crate::models::{CommandeChallengeAppareil, CommandeInscrireAppareil, CommandeSignerAppareil, DocAppareil, ReponseCertificat, TransactionMajAppareil, TransactionShowHideSensor};
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
@@ -25,6 +27,7 @@ pub const COMMANDE_RESET_CERTIFICATS: &str = "resetCertificatsAppareils";
 pub const COMMAND_DISCONNECT_RELAY: &str = "disconnectRelay";
 
 pub async fn process_command<M>(
+    pki: &dyn PkiService,
     mongo: &M,
     outbound: &MessageOutboundFacade,
     wrapper: MessageValidated
@@ -35,9 +38,9 @@ pub async fn process_command<M>(
     };
 
     match action {
-        COMMANDE_INSCRIRE_APPAREIL => todo!(),
-        COMMANDE_CHALLENGE_APPAREIL => todo!(),
-        COMMANDE_SIGNER_APPAREIL => todo!(),
+        COMMANDE_INSCRIRE_APPAREIL => register_device_command(mongo, outbound, wrapper).await,
+        COMMANDE_CHALLENGE_APPAREIL => device_challenge_command(mongo, outbound, wrapper).await,
+        COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, wrapper).await,
         COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
         COMMANDE_RESET_CERTIFICATS => todo!(),
         COMMAND_DISCONNECT_RELAY => todo!(),
@@ -62,15 +65,17 @@ pub async fn process_transaction<M>(
         None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
     };
     match action {
-        TRANSACTION_MAJ_SENSEUR => todo!(),
-        TRANSACTION_MAJ_NOEUD => todo!(),
-        TRANSACTION_SUPPRESSION_SENSEUR => todo!(),
         TRANSACTION_MAJ_APPAREIL => update_device_command(mongo, outbound, transaction, wrapper).await,
-        TRANSACTION_SAUVEGARDER_PROGRAMME => todo!(),
-        TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
-        TRANSACTION_APPAREIL_RESTAURER => todo!(),
-        TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
         TRANSACTION_SHOW_HIDE_SENSOR => show_hide_sensor_command(mongo, outbound, transaction, wrapper).await,
+
+        // Obsolete commands
+        TRANSACTION_MAJ_SENSEUR => outbound.respond(wrapper.delivery_info, ErrorMessage::err("majSenseur is obsolete")).await,
+        TRANSACTION_MAJ_NOEUD => outbound.respond(wrapper.delivery_info, ErrorMessage::err("majNoeud is obsolete")).await,
+        TRANSACTION_SUPPRESSION_SENSEUR => outbound.respond(wrapper.delivery_info, ErrorMessage::err("suppressionSenseur is obsolete")).await,
+        TRANSACTION_SAUVEGARDER_PROGRAMME => outbound.respond(wrapper.delivery_info, ErrorMessage::err("sauvegarderProgramme is obsolete")).await,
+        TRANSACTION_APPAREIL_SUPPRIMER => outbound.respond(wrapper.delivery_info, ErrorMessage::err("supprimerAppareil is obsolete")).await,
+        TRANSACTION_APPAREIL_RESTAURER => outbound.respond(wrapper.delivery_info, ErrorMessage::err("restaurerAppareil is obsolete")).await,
+        TRANSACTION_MAJ_CONFIGURATION_USAGER => outbound.respond(wrapper.delivery_info, ErrorMessage::err("majConfigurationUsager is obsolete")).await,
         _ => {
             info!("Unknown action {} for process_transaction, skipping", action);
             Ok(())
@@ -245,5 +250,384 @@ async fn show_hide_sensor_command<M>(
         outbound.respond(delivery_info, ErrorMessage::ok()).await
     } else {
         outbound.respond(wrapper.delivery_info, ErrorMessage::err("Unknown device")).await
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RegisterDeviceCertificateResponse {
+    ok: bool,
+    certificat: Vec<String>,
+}
+
+async fn register_device_command<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated,
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let command: CommandeInscrireAppareil = wrapper.message.deserialize()?;
+    debug!("Registering device {}", command.uuid_appareil);
+
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let filtre = doc! { CHAMP_USER_ID: &command.user_id, CHAMP_UUID_APPAREIL: &command.uuid_appareil };
+    let device_doc = match collection.find_one(filtre.clone()).await? {
+        Some(device_doc) => device_doc,
+        None => create_device_during_registration(mongo, &command).await?
+    };
+
+    match device_doc.certificat {
+        Some(certificate) => {
+            let response = RegisterDeviceCertificateResponse { ok: true, certificat: certificate };
+            // Use the public key to ensure the certificates match
+            if Some(&command.cle_publique) == device_doc.cle_publique.as_ref() {
+                debug!("Matching fingerprint for certificate (Public Key), sending certificate");
+                outbound.respond(wrapper.delivery_info, response).await
+            } else {
+                // We have a mismatch between the CSR and the existing certificate
+                debug!("We received and updated CSR from device, throw away existing cert/csr");
+                update_device_csr(mongo, &command).await?;
+                outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
+            }
+            // // Check if DB has CSR and ensure it matches the one received
+            // if let Some(db_csr) = device_doc.csr.as_ref() {
+            //     if &command.csr == db_csr {
+            //         debug!("We have a certificate and CSRs match, reply with cert");
+            //         outbound.respond(wrapper.delivery_info, response).await
+            //     } else {
+            //         debug!("We received and updated CSR from device, throw away existing cert/csr");
+            //         update_device_csr(mongo, &command).await?;
+            //         outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
+            //     }
+            // } else {
+            //     debug!("No CSR in DB and certificate present. Ensure incoming CSR matches the certificate");
+            //     if Some(&command.cle_publique) != device_doc.fingerprint.as_ref() {
+            //         debug!("We received and updated CSR (mismatch certificate public key) from device, throw away existing cert/csr");
+            //         update_device_csr(mongo, &command).await?;
+            //         outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
+            //     } else {
+            //         debug!("Matching fingerprint for certificate (Public Key), sending certificate");
+            //         outbound.respond(wrapper.delivery_info, response).await
+            //     }
+            // }
+        },
+        None => {
+            debug!("No certificate in the database, keep the incoming CSR for signing by user");
+            update_device_csr(mongo, &command).await?;
+
+            // Respond OK to device
+            outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
+        }
+    }
+
+    //     // Appareil existe deja, verifier si le certificat recu est deja signe
+    //     let certificat = doc_appareil.certificat;
+    //
+    //     match certificat {
+    //         Some(c) => {
+    //             let mut repondre_certificat = false;
+    //
+    //             // Comparer cles publiques - si differentes, on genere un nouveau certificat
+    //             if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
+    //                 if &commande.cle_publique != cle_publique_db {
+    //                     // Mismatch CSR et certificat, conserver le csr recu
+    //                     debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
+    //
+    //                     // certificat = None;
+    //                     // let ops = doc! {
+    //                     //     "$set": {
+    //                     //         "cle_publique": &commande.cle_publique,
+    //                     //         "csr": &commande.csr,
+    //                     //     },
+    //                     //     "$unset": {"certificat": true, "fingerprint": true},
+    //                     //     "$currentDate": {CHAMP_MODIFICATION: true},
+    //                     // };
+    //                     // collection.update_one(filtre_appareil.clone(), ops, None).await?;
+    //                 } else {
+    //                     repondre_certificat = true;
+    //                 }
+    //             } else {
+    //                 repondre_certificat = true;
+    //             }
+    //
+    //             if repondre_certificat {
+    //                 debug!("Repondre avec le certificat");
+    //                 let reponse = json!({"ok": true, "certificat": c});
+    //                 return Ok(Some(middleware.build_reponse(reponse)?.0));
+    //             }
+    //         },
+    //         None => {
+    //             // Par de certificat. Conserver le csr recu.
+    //         }
+    //     }
+}
+
+async fn update_device_csr(mongo: &dyn MongoDao, command: &CommandeInscrireAppareil) -> Result<(), CommonError> {
+    let collection = mongo.get_collection(COLLECTIONS_APPAREILS)?;
+    let filtre = doc! { CHAMP_USER_ID: &command.user_id, CHAMP_UUID_APPAREIL: &command.uuid_appareil };
+    let ops = doc! {
+        "$set": {
+            "cle_publique": &command.cle_publique,
+            "csr": &command.csr,
+        },
+        "$unset": {"certificat": true, "fingerprint": true},
+        "$currentDate": {CHAMP_MODIFICATION: true},
+    };
+    collection.update_one(filtre.clone(), ops).await?;
+    Ok(())
+}
+
+async fn create_device_during_registration<M>(
+    mongo: &M,
+    command: &CommandeInscrireAppareil,
+) -> Result<DocAppareil, CommonError> where M: MongoDaoTyped {
+    let doc_appareil = DocAppareil {
+        uuid_appareil: command.uuid_appareil.clone(),
+        instance_id: Some(command.instance_id.clone()),
+        user_id: Some(command.user_id.clone()),
+        cle_publique: None,
+        csr: None,
+        certificat: None,
+        fingerprint: None,
+        senseurs: None,
+        derniere_lecture: None,
+        configuration: None,
+        displays: None,
+        programmes: None,
+        persiste: None,
+        types_donnees: None,
+        supprime: None,
+        connecte: None,
+        version: None,
+    };
+
+    let mut set_on_insert = bson::serialize_to_document(&doc_appareil)?;
+    set_on_insert.insert(CHAMP_CREATION, Utc::now());
+
+    let ops = doc! {
+        "$setOnInsert": set_on_insert,
+        "$set": {
+            CHAMP_MODIFICATION: Utc::now(),
+        }
+    };
+
+    let filtre = doc! { CHAMP_USER_ID: &command.user_id, CHAMP_UUID_APPAREIL: &command.uuid_appareil };
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let _result = collection.update_one(filtre, ops).upsert(true).await?;
+
+    // Return the new document
+    Ok(doc_appareil)
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DeviceChallengeCommandResponse {
+    ok: bool,
+    uuid_appareil: String,
+    challenge: Vec<u8>,
+    cle_publique: String,
+    fingerprint: String,
+}
+
+async fn device_challenge_command<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated,
+) -> Result<(), CommonError> where M: MongoDaoTyped
+{
+    let command: CommandeChallengeAppareil = wrapper.message.deserialize()?;
+    debug!("Challenge for device {}", command.uuid_appareil);
+
+    let user_id = match wrapper.get_certificate_user_id() {
+        Some(user_id) => user_id,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Certificate does not have a user id")).await
+    };
+
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &command.uuid_appareil };
+    let device_doc = match collection.find_one(filtre).await? {
+        Some(doc) => doc,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Device not found")).await
+    };
+
+    // Extract fields required for challenge
+    let (instance_id, cle_publique, fingerprint) = match (
+        device_doc.instance_id.as_ref(),
+        device_doc.cle_publique.as_ref(),
+        device_doc.fingerprint.as_ref()
+    ) {
+        (
+            Some(instance_id),
+            Some(cle_publique),
+            Some(fingerprint)
+        ) => (
+            instance_id.clone(),
+            cle_publique.clone(),
+            fingerprint.clone()
+        ),
+        _ => {
+            debug!("Device doc missing some fields (instance_id, cle_publique, fingerprint): {:?}", device_doc);
+            return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Public key/fingerprint not initialized")).await
+        }
+    };
+
+    let routing = RoutageMessageAction::builder(
+        ROLE_RELAI_NOM,
+        COMMANDE_CHALLENGE_APPAREIL,
+        vec![Securite::L2Prive]
+    )
+        .blocking(false)
+        .partition(instance_id)
+        .build();
+
+    let challenge_command = DeviceChallengeCommandResponse {
+        ok: true,
+        uuid_appareil: command.uuid_appareil,
+        challenge: command.challenge,
+        cle_publique,
+        fingerprint,
+    };
+    outbound.send_command(routing, challenge_command).await?;
+
+    outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
+
+    //     // Emettre la commande de challenge
+    //     let message_challenge = json!({
+    //         "ok": true,
+    //         "uuid_appareil": &commande.uuid_appareil,
+    //         "challenge": &commande.challenge,
+    //         "cle_publique": doc_appareil.cle_publique,
+    //         "fingerprint": doc_appareil.fingerprint,
+    //     });
+    //     let routage = RoutageMessageAction::builder("senseurspassifs_relai", "challengeAppareil", vec![Securite::L2Prive])
+    //         .partition(instance_id)
+    //         .blocking(false)
+    //         .build();
+    //     middleware.transmettre_commande(routage, &message_challenge).await?;
+    //
+    //     Ok(Some(middleware.reponse_ok(None, None)?))
+}
+
+async fn sign_device_command<M>(
+    pki: &dyn PkiService,
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated,
+) -> Result<(), CommonError> where M: MongoDaoTyped
+{
+    let command: CommandeSignerAppareil = wrapper.message.deserialize()?;
+    debug!("Sign device {}", command.uuid_appareil);
+
+    let user_id = match wrapper.get_certificate_user_id() {
+        Some(user_id) => user_id,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Certificate does not have a user id")).await
+    };
+
+    // Determine if this is an auto-renewal
+    let mut renewal = false;
+    if command.csr.is_some() {
+        let common_name = wrapper.certificate.get_common_name()?;
+        if command.uuid_appareil.as_str() == common_name.as_str() {
+            debug!("Valid renewal request for device {}", common_name);
+            renewal = true;
+        }
+    }
+
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let filtre_appareil = doc! {"uuid_appareil": &command.uuid_appareil, "user_id": &user_id,};
+    let device_doc = match collection.find_one(filtre_appareil).await? {
+        Some(doc) => doc,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Renewal denied, unknown device")).await
+    };
+
+    let certificate = match renewal {
+        true => {
+            sign_certificate(
+                mongo,
+                outbound,
+                pki,
+                user_id.as_str(),
+                &device_doc,
+                command.csr.as_ref(),
+            ).await?
+        }
+        false => match device_doc.certificat {
+            Some(c) => c,
+            None => {
+                sign_certificate(
+                    mongo,
+                    outbound,
+                    pki,
+                    user_id.as_str(),
+                    &device_doc,
+                    command.csr.as_ref(),
+                ).await?
+            }
+        }
+    };
+
+    let certificate_response = RegisterDeviceCertificateResponse { ok: true, certificat: certificate };
+    outbound.respond(wrapper.delivery_info, certificate_response).await
+}
+
+async fn sign_certificate<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    pki: &dyn PkiService,
+    user_id: &str,
+    doc_appareil: &DocAppareil,
+    csr_inclus: Option<&String>,
+) -> Result<Vec<String>, CommonError> where M: MongoDaoTyped {
+    let csr = match csr_inclus {
+        Some(c) => c.to_owned(),
+        None => match doc_appareil.csr.as_ref() {
+            Some(c) => c.to_owned(),
+            None => return Err(CommonError::Str("CSR missing from command"))
+        }
+    };
+
+    debug!("signer_certificat Aucun certificat, faire demande de signature");
+    let routage = RoutageMessageAction::builder(
+        DOMAINE_PKI,
+        "signerCsr",
+        vec![Securite::L1Public]
+    ).build();
+
+    let command = json!({
+        "csr": csr,  // &doc_appareil.csr,
+        "roles": ["senseurspassifs"],
+        "user_id": user_id,
+    });
+    debug!("Sending command to sign device : {:?}", command);
+    let reponse: ReponseCertificat = match outbound.send_command(routage, &command).await? {
+        Some(r) => r.message.deserialize()?,
+        None => return Err(CommonError::Str("No response receive on sign certificate command"))
+    };
+
+    debug!("signer_certificat Reponse : {:?}", reponse);
+    if let Some(true) = reponse.ok {
+        let (certificat, fingerprint) = match &reponse.certificat {
+            Some(c) => {
+                // Validate that the new PEM is correct, get fingerprint
+                let cert = pki.validate_pem(c.join("\n").as_str(), None, None)?;
+                let fingerprint = cert.fingerprint()?;
+                (c.to_owned(), fingerprint)
+            },
+            None => Err(CommonError::Str("Incorrect server response on device signing request (cert)"))?
+        };
+
+        let ops = doc! {
+            "$set": {
+                "certificat": &reponse.certificat,
+                "fingerprint": fingerprint,
+            },
+            "$unset": {"csr": true},
+            "$currentDate": {CHAMP_MODIFICATION: true, "certificat_signature_date": true},
+        };
+
+        let collection = mongo.get_collection(COLLECTIONS_APPAREILS)?;
+        let filtre_appareil = doc! {"uuid_appareil": &doc_appareil.uuid_appareil, "user_id": &user_id,};
+        collection.update_one(filtre_appareil, ops).await?;
+
+        Ok(certificat)  // Retourner certificat via reponse
+    } else {
+        Err(CommonError::Str("Incorrect server response on device signing request (ok=false)"))?
     }
 }

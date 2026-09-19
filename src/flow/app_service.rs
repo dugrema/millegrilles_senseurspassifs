@@ -192,6 +192,7 @@ impl ApplicationService {
             match result {
                 Ok(message) => {
                     if let Err(e) = process_command(
+                        self.pki.as_ref(),
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
                         message

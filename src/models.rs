@@ -389,3 +389,30 @@ pub struct TransactionShowHideSensor {
     pub show: Option<bool>,
     pub hide: Option<bool>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeInscrireAppareil {
+    pub uuid_appareil: String,
+    pub instance_id: String,
+    pub user_id: String,
+    pub cle_publique: String,
+    pub csr: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeChallengeAppareil {
+    pub uuid_appareil: String,
+    pub challenge: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeSignerAppareil {
+    pub uuid_appareil: String,
+    pub csr: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReponseCertificat {
+    pub ok: Option<bool>,
+    pub certificat: Option<Vec<String>>,
+}

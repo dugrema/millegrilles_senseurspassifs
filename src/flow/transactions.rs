@@ -82,17 +82,16 @@ impl TransactionRouter for SenseursPassifsTransactionRouter {
             TRANSACTION_MAJ_APPAREIL => update_device_transaction(self.mongo.as_ref(), wrapper).await,
             TRANSACTION_SHOW_HIDE_SENSOR => show_hide_sensor_transaction(self.mongo.as_ref(), wrapper).await,
 
-            TRANSACTION_MAJ_SENSEUR => todo!(),
-            TRANSACTION_MAJ_NOEUD => todo!(),
-            TRANSACTION_SUPPRESSION_SENSEUR => todo!(),
-            TRANSACTION_INIT_APPAREIL => todo!(),
-            TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
-            TRANSACTION_APPAREIL_RESTAURER => todo!(),
-            TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
-            TRANSACTION_SAUVEGARDER_PROGRAMME => todo!(),
-
             // Legacy
-            TRANSACTION_LECTURE => todo!(),
+            TRANSACTION_LECTURE => panic!("Obsolete"),
+            TRANSACTION_MAJ_SENSEUR => panic!("Obsolete"),
+            TRANSACTION_MAJ_NOEUD => panic!("Obsolete"),
+            TRANSACTION_SUPPRESSION_SENSEUR => panic!("Obsolete"),
+            TRANSACTION_INIT_APPAREIL => panic!("Obsolete"),
+            TRANSACTION_APPAREIL_SUPPRIMER => panic!("Obsolete"),
+            TRANSACTION_APPAREIL_RESTAURER => panic!("Obsolete"),
+            TRANSACTION_MAJ_CONFIGURATION_USAGER => panic!("Obsolete"),
+            TRANSACTION_SAUVEGARDER_PROGRAMME => panic!("Obsolete"),
             _ => Err(CommonError::Str("Unknown transaction action"))
         }
     }
