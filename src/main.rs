@@ -15,9 +15,9 @@ pub mod models;
 use std::path::Path;
 use crate::common::DOMAINE_NOM;
 use crate::state::AppContext;
-use millegrilles_common_rust::tracing::{debug, info, warn};
+use millegrilles_common_rust::tracing::{debug, error, info, warn};
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
-use millegrilles_common_rust::v3::PresenceService;
+use millegrilles_common_rust::v3::{ChiffrageService, PresenceService};
 use millegrilles_common_rust::{rustls, tokio as tokio};
 use millegrilles_common_rust::{tracing_subscriber, tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt}};
 use clap::Parser;
@@ -49,7 +49,7 @@ async fn main() {
         }
     };
 
-    init_tasks(context.outbound.as_ref()).await;
+    init_tasks(context.outbound.as_ref(), context.chiffrage.as_ref()).await;
 
     tokio::select! {
         _ = shutdown_signal => {
@@ -80,12 +80,23 @@ fn init_resources() {
 }
 
 /// This runs once on startup after all the wiring is done and threads are started
-async fn init_tasks(outbound: &MessageOutboundFacade) {
+async fn init_tasks(outbound: &MessageOutboundFacade, chiffrage: &dyn ChiffrageService) {
     // Wait for queues to emit initial domain presence
     match outbound.wait_ready(Some(5_000)).await {
         Ok(()) => {
             if let Err(e) = outbound.emit_domain_presence(DOMAINE_NOM, None).await {
                 warn!("Error emitting initial domain presence: {}", e);
+            }
+            match outbound.get_keymaster_certificates().await {
+                Ok(certificates) => {
+                    debug!("Received keymaster certificate (count: {})", certificates.len());
+                    for cert in certificates {
+                        if let Err(e) = chiffrage.add_encryption_publickey(cert) {
+                            error!("Error adding keymaster certificate: {}", e);
+                        }
+                    }
+                },
+                Err(e) => error!("Error getting keymaster certificates: {}", e),
             }
         },
         Err(e) => {

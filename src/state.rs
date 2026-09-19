@@ -8,7 +8,7 @@ use millegrilles_common_rust::mongo_dao::{MongoDaoImpl, initialiser};
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_util::sync::CancellationToken;
 use millegrilles_common_rust::tracing::{debug, info};
-use millegrilles_common_rust::v3::ConfigService;
+use millegrilles_common_rust::v3::{ChiffrageService, ConfigService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageInboundValidator;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::impls::config_service::ConfigServiceDbImpl;
@@ -27,6 +27,7 @@ use crate::flow::restore::restore_from_backup;
 pub struct AppContext {
     pub join_set: JoinSet<()>,
     pub config: Arc<dyn ConfigService>,
+    pub chiffrage: Arc<dyn ChiffrageService>,
     pub mongo: Arc<MongoDaoImpl>,
     pub outbound: Arc<MessageOutboundFacade>,
     pub shutdown_token: CancellationToken,
@@ -111,6 +112,7 @@ impl AppContext {
         Ok(AppContext {
             join_set,
             config: config.clone(),
+            chiffrage: security.clone(),
             mongo,
             outbound,
             shutdown_token,
