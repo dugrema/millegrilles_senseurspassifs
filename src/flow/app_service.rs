@@ -22,6 +22,7 @@ use std::sync::Arc;
 use millegrilles_common_rust::chrono::Utc;
 use millegrilles_common_rust::openssl::pkey::{PKey, Private};
 use millegrilles_common_rust::v3::impls::backup_restorer::RestorationState;
+use crate::flow::restore::rebuild_devices;
 
 /// Handles queue consumer threads, calls individual routing methods
 pub struct ApplicationService {
@@ -316,6 +317,10 @@ impl ApplicationService {
         ).await?;
         let duration = Utc::now() - start_time;
         info!("restore_domain duration: {} ms", duration.num_milliseconds());
+
+        // Rebuild sensor devices (legacy readings/transactions)
+        info!("Rebuilding device states from latest sensor readings");
+        rebuild_devices(self.mongo.as_ref()).await?;
 
         Ok(result)
     }
