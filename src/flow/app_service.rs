@@ -195,6 +195,7 @@ impl ApplicationService {
                         self.pki.as_ref(),
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
+                        self.transaction.as_ref(),
                         message
                     ).await {
                         error!("Command job failed: {}", e);

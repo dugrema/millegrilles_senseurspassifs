@@ -1,6 +1,6 @@
 use crate::common::*;
 use crate::external::mongo::{COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
-use crate::models::{SenseurHoraireRow, TransactionLectureHoraire, TransactionMajAppareil, TransactionShowHideSensor};
+use crate::models::{SenseurHoraireRow, TransactionInitialiserAppareil, TransactionLectureHoraire, TransactionMajAppareil, TransactionShowHideSensor};
 use millegrilles_common_rust::async_trait::async_trait;
 use millegrilles_common_rust::bson;
 use millegrilles_common_rust::bson::doc;
@@ -77,13 +77,13 @@ impl TransactionRouter for SenseursPassifsTransactionRouter {
             TRANSACTION_SENSEUR_HORAIRE => process_hourly_device_readings(self.mongo.as_ref(), wrapper, self.ignore_duplicates).await,
             TRANSACTION_MAJ_APPAREIL => update_device_transaction(self.mongo.as_ref(), wrapper).await,
             TRANSACTION_SHOW_HIDE_SENSOR => show_hide_sensor_transaction(self.mongo.as_ref(), wrapper).await,
+            TRANSACTION_INIT_APPAREIL => init_device(self.mongo.as_ref(), wrapper).await,
 
             // Legacy
             TRANSACTION_LECTURE => panic!("Obsolete"),
             TRANSACTION_MAJ_SENSEUR => panic!("Obsolete"),
             TRANSACTION_MAJ_NOEUD => panic!("Obsolete"),
             TRANSACTION_SUPPRESSION_SENSEUR => panic!("Obsolete"),
-            TRANSACTION_INIT_APPAREIL => panic!("Obsolete"),
             TRANSACTION_APPAREIL_SUPPRIMER => panic!("Obsolete"),
             TRANSACTION_APPAREIL_RESTAURER => panic!("Obsolete"),
             TRANSACTION_MAJ_CONFIGURATION_USAGER => panic!("Obsolete"),
@@ -261,6 +261,45 @@ async fn show_hide_sensor_transaction(
             .build()
     );
     aggregator.ordered = Some(vec![update_model]);
+
+    Ok(aggregator)
+}
+
+async fn init_device(
+    mongo: &dyn MongoDao,
+    wrapper: TransactionWrapper,
+) -> Result<TransactionOperationAggregator, CommonError> {
+    // Deserialize, this validates the structure
+    let transaction_value: TransactionInitialiserAppareil = wrapper.message.deserialize()?;
+
+    let mut aggregator = TransactionOperationAggregator::new();
+    let collection = mongo.get_collection(COLLECTIONS_APPAREILS)?;
+    let filtre = doc! {
+        CHAMP_UUID_APPAREIL: &transaction_value.uuid_appareil,
+        CHAMP_USER_ID: &transaction_value.user_id
+    };
+    let ops = doc! {
+        "$set": { "persiste": true },
+        "$setOnInsert": {
+            CHAMP_UUID_APPAREIL: &transaction_value.uuid_appareil,
+            CHAMP_USER_ID: &transaction_value.user_id,
+            CHAMP_CREATION: &wrapper.message.estampille,
+            "present": false,
+        },
+        "$currentDate": { CHAMP_MODIFICATION: true },
+    };
+
+    let update_model = WriteModel::UpdateOne(
+        UpdateOneModel::builder()
+            .upsert(true)
+            .namespace(collection.namespace())
+            .filter(filtre)
+            .update(ops)
+            .build()
+    );
+
+    // The only lasting effect is on persiste = true (which never gets toggled to false). Can be unordered.
+    aggregator.unordered = Some(vec![update_model]);
 
     Ok(aggregator)
 }

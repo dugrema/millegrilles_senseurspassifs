@@ -1,24 +1,24 @@
-use millegrilles_common_rust::bson;
+use crate::common::*;
+use crate::flow::events::device_presence_event;
+use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_APPAREIL_RESTAURER, TRANSACTION_APPAREIL_SUPPRIMER, TRANSACTION_INIT_APPAREIL, TRANSACTION_MAJ_APPAREIL, TRANSACTION_MAJ_CONFIGURATION_USAGER, TRANSACTION_MAJ_NOEUD, TRANSACTION_MAJ_SENSEUR, TRANSACTION_SAUVEGARDER_PROGRAMME, TRANSACTION_SHOW_HIDE_SENSOR, TRANSACTION_SUPPRESSION_SENSEUR};
+use crate::models::{CommandeChallengeAppareil, CommandeInscrireAppareil, CommandeSignerAppareil, DocAppareil, EvenementPresenceAppareilUser, ReponseCertificat, TransactionInitialiserAppareil, TransactionMajAppareil, TransactionShowHideSensor};
 use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::chrono::{DateTime, Utc};
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
-use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
-use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
-use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
-use millegrilles_common_rust::v3::models::ErrorMessage;
-use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::optionepochseconds;
+use millegrilles_common_rust::mongo_dao::{MongoDao, MongoDaoTyped};
+use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::serde_json::json;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::tracing::{debug, info};
+use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
+use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
+use millegrilles_common_rust::v3::models::ErrorMessage;
 use millegrilles_common_rust::v3::PkiService;
-use crate::common::*;
-use crate::flow::events::device_presence_event;
-use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_APPAREIL_RESTAURER, TRANSACTION_APPAREIL_SUPPRIMER, TRANSACTION_MAJ_APPAREIL, TRANSACTION_MAJ_CONFIGURATION_USAGER, TRANSACTION_MAJ_NOEUD, TRANSACTION_MAJ_SENSEUR, TRANSACTION_SAUVEGARDER_PROGRAMME, TRANSACTION_SHOW_HIDE_SENSOR, TRANSACTION_SUPPRESSION_SENSEUR};
-use crate::models::{CommandeChallengeAppareil, CommandeInscrireAppareil, CommandeSignerAppareil, DocAppareil, EvenementPresenceAppareilUser, ReponseCertificat, TransactionMajAppareil, TransactionShowHideSensor};
+use millegrilles_common_rust::{bson, serde_json};
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
@@ -31,6 +31,7 @@ pub async fn process_command<M>(
     pki: &dyn PkiService,
     mongo: &M,
     outbound: &MessageOutboundFacade,
+    transaction: &SenseursPassifsTransactionService,
     wrapper: MessageValidated
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
     let action = match wrapper.get_routing_action() {
@@ -41,7 +42,7 @@ pub async fn process_command<M>(
     match action {
         COMMANDE_INSCRIRE_APPAREIL => register_device_command(mongo, outbound, wrapper).await,
         COMMANDE_CHALLENGE_APPAREIL => device_challenge_command(mongo, outbound, wrapper).await,
-        COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, wrapper).await,
+        COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, transaction, wrapper).await,
         COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
         COMMAND_DISCONNECT_RELAY => disconnect_relay_command(mongo, outbound, wrapper).await,
         EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
@@ -435,6 +436,7 @@ async fn sign_device_command<M>(
     pki: &dyn PkiService,
     mongo: &M,
     outbound: &MessageOutboundFacade,
+    transaction: &SenseursPassifsTransactionService,
     wrapper: MessageValidated,
 ) -> Result<(), CommonError> where M: MongoDaoTyped
 {
@@ -488,6 +490,22 @@ async fn sign_device_command<M>(
             }
         }
     };
+
+    if ! renewal && wrapper.certificate.verifier_roles_string(vec!["navigateur".to_string()])? {
+        if device_doc.persiste != Some(true) {
+            debug!("This is a user signing the certificate of a new device, create init transaction for rebuild");
+            let transaction_init = TransactionInitialiserAppareil {
+                uuid_appareil: device_doc.uuid_appareil.to_owned(),
+                user_id,
+            };
+            transaction.process_value(
+                DOMAINE_NOM,
+                TRANSACTION_INIT_APPAREIL,
+                serde_json::to_value(transaction_init)?,
+                None
+            ).await?;
+        }
+    }
 
     let certificate_response = RegisterDeviceCertificateResponse { ok: true, certificat: certificate };
     outbound.respond(wrapper.delivery_info, certificate_response).await

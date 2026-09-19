@@ -416,3 +416,9 @@ pub struct ReponseCertificat {
     pub ok: Option<bool>,
     pub certificat: Option<Vec<String>>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionInitialiserAppareil {
+    pub uuid_appareil: String,
+    pub user_id: String,
+}
