@@ -18,7 +18,7 @@ use millegrilles_common_rust::v3::models::{BatchInsertions, ErrorMessage, Transa
 use crate::common::*;
 use crate::external::mongo::{COLLECTION_NAME_REDOLOG, COLLECTION_NAME_TRACKING};
 use crate::flow::commands::update_device_command;
-use crate::models::{SenseurHoraireRow, TransactionLectureHoraire, TransactionMajAppareil};
+use crate::models::{SenseurHoraireRow, TransactionLectureHoraire, TransactionMajAppareil, TransactionShowHideSensor};
 
 pub const TRANSACTION_LECTURE: &str = "lecture";
 pub const TRANSACTION_MAJ_SENSEUR: &str = "majSenseur";
@@ -32,35 +32,6 @@ pub const TRANSACTION_SENSEUR_HORAIRE: &str = "senseurHoraire";
 pub const TRANSACTION_APPAREIL_SUPPRIMER: &str = "supprimerAppareil";
 pub const TRANSACTION_APPAREIL_RESTAURER: &str = "restaurerAppareil";
 pub const TRANSACTION_MAJ_CONFIGURATION_USAGER: &str = "majConfigurationUsager";
-
-
-pub async fn process_transaction<M>(
-    mongo: &M,
-    outbound: &MessageOutboundFacade,
-    transaction: &SenseursPassifsTransactionService,
-    wrapper: MessageValidated
-) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let action = match wrapper.get_routing_action() {
-        Some(action) => action,
-        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
-    };
-    match action {
-        TRANSACTION_LECTURE => todo!(),
-        TRANSACTION_MAJ_SENSEUR => todo!(),
-        TRANSACTION_MAJ_NOEUD => todo!(),
-        TRANSACTION_SUPPRESSION_SENSEUR => todo!(),
-        TRANSACTION_MAJ_APPAREIL => update_device_command(mongo, outbound, transaction, wrapper).await,
-        TRANSACTION_SAUVEGARDER_PROGRAMME => todo!(),
-        TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
-        TRANSACTION_APPAREIL_RESTAURER => todo!(),
-        TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
-        TRANSACTION_SHOW_HIDE_SENSOR => todo!(),
-        _ => {
-            info!("Unknown action {} for process_transaction, skipping", action);
-            Ok(())
-        }
-    }
-}
 
 pub struct SenseursPassifsTransactionService {
     transactions: Box<dyn TransactionService>,
@@ -109,6 +80,19 @@ impl TransactionRouter for SenseursPassifsTransactionRouter {
         match action.as_str() {
             TRANSACTION_SENSEUR_HORAIRE => process_hourly_device_readings(self.mongo.as_ref(), wrapper, self.ignore_duplicates).await,
             TRANSACTION_MAJ_APPAREIL => update_device_transaction(self.mongo.as_ref(), wrapper).await,
+            TRANSACTION_SHOW_HIDE_SENSOR => show_hide_sensor_transaction(self.mongo.as_ref(), wrapper).await,
+
+            TRANSACTION_MAJ_SENSEUR => todo!(),
+            TRANSACTION_MAJ_NOEUD => todo!(),
+            TRANSACTION_SUPPRESSION_SENSEUR => todo!(),
+            TRANSACTION_INIT_APPAREIL => todo!(),
+            TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
+            TRANSACTION_APPAREIL_RESTAURER => todo!(),
+            TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
+            TRANSACTION_SAUVEGARDER_PROGRAMME => todo!(),
+
+            // Legacy
+            TRANSACTION_LECTURE => todo!(),
             _ => Err(CommonError::Str("Unknown transaction action"))
         }
     }
@@ -155,7 +139,7 @@ async fn process_hourly_device_readings(
     Ok(aggregator)
 }
 
-pub async fn update_device_transaction(
+async fn update_device_transaction(
     mongo: &dyn MongoDao,
     wrapper: TransactionWrapper,
 ) -> Result<TransactionOperationAggregator, CommonError> {
@@ -229,6 +213,49 @@ pub async fn update_device_transaction(
     };
     let filtre = doc! { CHAMP_UUID_APPAREIL: &transaction_value.uuid_appareil, CHAMP_USER_ID: &user_id };
     let collection = mongo.get_collection(COLLECTIONS_APPAREILS)?;
+    let update_model = WriteModel::UpdateOne(
+        UpdateOneModel::builder()
+            .upsert(true)
+            .namespace(collection.namespace())
+            .filter(filtre)
+            .update(ops)
+            .build()
+    );
+    aggregator.ordered = Some(vec![update_model]);
+
+    Ok(aggregator)
+}
+
+async fn show_hide_sensor_transaction(
+    mongo: &dyn MongoDao,
+    wrapper: TransactionWrapper,
+) -> Result<TransactionOperationAggregator, CommonError> {
+    let user_id = match wrapper.get_certificate_user_id() {
+        Some(user_id) => user_id,
+        None => return Err(CommonError::Str("Missing user_id from certificate"))
+    };
+
+    // Deserialize, this validates the structure
+    let transaction_value: TransactionShowHideSensor = wrapper.message.deserialize()?;
+
+    let mut aggregator = TransactionOperationAggregator::new();
+
+    let collection = mongo.get_collection(COLLECTIONS_APPAREILS)?;
+    let deleted_flag = match transaction_value.hide {
+        Some(true) => true,
+        _ => false
+    };
+
+    let mut ops = doc! {
+        "$currentDate": { CHAMP_MODIFICATION: true }
+    };
+    if deleted_flag {
+        ops.insert("$addToSet", doc!{"configuration.cacher_senseurs": transaction_value.senseur_id});
+    } else {
+        ops.insert("$pull", doc!{"configuration.cacher_senseurs": transaction_value.senseur_id});
+    }
+
+    let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &transaction_value.uuid_appareil };
     let update_model = WriteModel::UpdateOne(
         UpdateOneModel::builder()
             .upsert(true)

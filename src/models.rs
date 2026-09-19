@@ -381,3 +381,11 @@ pub struct EvenementPresenceAppareil {
     pub version: Option<String>,
     pub deconnecte: Option<bool>,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct TransactionShowHideSensor {
+    pub uuid_appareil: String,
+    pub senseur_id: String,
+    pub show: Option<bool>,
+    pub hide: Option<bool>,
+}

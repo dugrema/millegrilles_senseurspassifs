@@ -14,8 +14,8 @@ use millegrilles_common_rust::serde_json::json;
 use millegrilles_common_rust::tracing::info;
 use crate::common::*;
 use crate::flow::events::device_presence_event;
-use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_MAJ_APPAREIL};
-use crate::models::{DocAppareil, TransactionMajAppareil};
+use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_APPAREIL_RESTAURER, TRANSACTION_APPAREIL_SUPPRIMER, TRANSACTION_MAJ_APPAREIL, TRANSACTION_MAJ_CONFIGURATION_USAGER, TRANSACTION_MAJ_NOEUD, TRANSACTION_MAJ_SENSEUR, TRANSACTION_SAUVEGARDER_PROGRAMME, TRANSACTION_SHOW_HIDE_SENSOR, TRANSACTION_SUPPRESSION_SENSEUR};
+use crate::models::{DocAppareil, TransactionMajAppareil, TransactionShowHideSensor};
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
@@ -44,6 +44,35 @@ pub async fn process_command<M>(
         EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
         _ => {
             info!("Unknown action {} for process_command, skipping", action);
+            Ok(())
+        }
+    }
+}
+
+/// Process the command part of the transaction (checks, validations, volatile updates),
+/// calls transaction processor and then handles responses and emits events.
+pub async fn process_transaction<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    transaction: &SenseursPassifsTransactionService,
+    wrapper: MessageValidated
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    let action = match wrapper.get_routing_action() {
+        Some(action) => action,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
+    };
+    match action {
+        TRANSACTION_MAJ_SENSEUR => todo!(),
+        TRANSACTION_MAJ_NOEUD => todo!(),
+        TRANSACTION_SUPPRESSION_SENSEUR => todo!(),
+        TRANSACTION_MAJ_APPAREIL => update_device_command(mongo, outbound, transaction, wrapper).await,
+        TRANSACTION_SAUVEGARDER_PROGRAMME => todo!(),
+        TRANSACTION_APPAREIL_SUPPRIMER => todo!(),
+        TRANSACTION_APPAREIL_RESTAURER => todo!(),
+        TRANSACTION_MAJ_CONFIGURATION_USAGER => todo!(),
+        TRANSACTION_SHOW_HIDE_SENSOR => show_hide_command(mongo, outbound, transaction, wrapper).await,
+        _ => {
+            info!("Unknown action {} for process_transaction, skipping", action);
             Ok(())
         }
     }
@@ -182,4 +211,39 @@ pub async fn update_device_command<M>(
 
     // Respond with complete updated device document
     outbound.respond(delivery_info, device).await
+}
+
+async fn show_hide_command<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    transaction: &SenseursPassifsTransactionService,
+    wrapper: MessageValidated,
+) -> Result<(), CommonError> where M: MongoDaoTyped {
+    // Validate the content of the transaction
+    let command: TransactionShowHideSensor = wrapper.message.deserialize()?;
+    let user_id = match wrapper.get_certificate_user_id() {
+        Some(user_id) => user_id,
+        None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Certificate does not have a user id")).await
+    };
+
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+    let filtre = doc! { CHAMP_USER_ID: &user_id, CHAMP_UUID_APPAREIL: &command.uuid_appareil };
+    if let Some(device_doc) = collection.find_one(filtre).await? {
+        let delivery_info = wrapper.delivery_info.clone();
+
+        // Process the transaction database updates
+        transaction.process_transaction(wrapper.into(), None).await?;
+
+        let routage_evenement = RoutageMessageAction::builder(
+            DOMAINE_NOM,
+            TRANSACTION_MAJ_APPAREIL,
+            vec![Securite::L2Prive]
+        )
+            .partition(&user_id)
+            .build();
+        outbound.emit_event(routage_evenement, &device_doc).await?;
+        outbound.respond(delivery_info, ErrorMessage::ok()).await
+    } else {
+        outbound.respond(wrapper.delivery_info, ErrorMessage::err("Unknown device")).await
+    }
 }

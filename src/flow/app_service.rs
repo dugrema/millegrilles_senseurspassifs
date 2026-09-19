@@ -1,12 +1,12 @@
 use crate::common::DOMAINE_NOM;
 use crate::external::mongo::create_index_mongodb;
 use crate::external::mq::*;
-use crate::flow::commands::process_command;
+use crate::flow::commands::{process_command, process_transaction};
 use crate::flow::maintenance::process_ticker_job;
 use crate::flow::readings::process_reading;
 use crate::flow::requests::{process_device_request, process_request};
 use crate::flow::requests_reports::process_report;
-use crate::flow::transactions::{SenseursPassifsTransactionService, process_transaction};
+use crate::flow::transactions::SenseursPassifsTransactionService;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::mongo_dao::MongoDaoImpl;
 use millegrilles_common_rust::tokio;
