@@ -290,27 +290,6 @@ async fn register_device_command<M>(
                 update_device_csr(mongo, &command).await?;
                 outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
             }
-            // // Check if DB has CSR and ensure it matches the one received
-            // if let Some(db_csr) = device_doc.csr.as_ref() {
-            //     if &command.csr == db_csr {
-            //         debug!("We have a certificate and CSRs match, reply with cert");
-            //         outbound.respond(wrapper.delivery_info, response).await
-            //     } else {
-            //         debug!("We received and updated CSR from device, throw away existing cert/csr");
-            //         update_device_csr(mongo, &command).await?;
-            //         outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
-            //     }
-            // } else {
-            //     debug!("No CSR in DB and certificate present. Ensure incoming CSR matches the certificate");
-            //     if Some(&command.cle_publique) != device_doc.fingerprint.as_ref() {
-            //         debug!("We received and updated CSR (mismatch certificate public key) from device, throw away existing cert/csr");
-            //         update_device_csr(mongo, &command).await?;
-            //         outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
-            //     } else {
-            //         debug!("Matching fingerprint for certificate (Public Key), sending certificate");
-            //         outbound.respond(wrapper.delivery_info, response).await
-            //     }
-            // }
         },
         None => {
             debug!("No certificate in the database, keep the incoming CSR for signing by user");
@@ -320,47 +299,6 @@ async fn register_device_command<M>(
             outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
         }
     }
-
-    //     // Appareil existe deja, verifier si le certificat recu est deja signe
-    //     let certificat = doc_appareil.certificat;
-    //
-    //     match certificat {
-    //         Some(c) => {
-    //             let mut repondre_certificat = false;
-    //
-    //             // Comparer cles publiques - si differentes, on genere un nouveau certificat
-    //             if let Some(cle_publique_db) = doc_appareil.cle_publique.as_ref() {
-    //                 if &commande.cle_publique != cle_publique_db {
-    //                     // Mismatch CSR et certificat, conserver le csr recu
-    //                     debug!("commande_inscrire_appareil Reset certificat, demande avec nouveau CSR");
-    //
-    //                     // certificat = None;
-    //                     // let ops = doc! {
-    //                     //     "$set": {
-    //                     //         "cle_publique": &commande.cle_publique,
-    //                     //         "csr": &commande.csr,
-    //                     //     },
-    //                     //     "$unset": {"certificat": true, "fingerprint": true},
-    //                     //     "$currentDate": {CHAMP_MODIFICATION: true},
-    //                     // };
-    //                     // collection.update_one(filtre_appareil.clone(), ops, None).await?;
-    //                 } else {
-    //                     repondre_certificat = true;
-    //                 }
-    //             } else {
-    //                 repondre_certificat = true;
-    //             }
-    //
-    //             if repondre_certificat {
-    //                 debug!("Repondre avec le certificat");
-    //                 let reponse = json!({"ok": true, "certificat": c});
-    //                 return Ok(Some(middleware.build_reponse(reponse)?.0));
-    //             }
-    //         },
-    //         None => {
-    //             // Par de certificat. Conserver le csr recu.
-    //         }
-    //     }
 }
 
 async fn update_device_csr(mongo: &dyn MongoDao, command: &CommandeInscrireAppareil) -> Result<(), CommonError> {
@@ -480,6 +418,7 @@ async fn device_challenge_command<M>(
         .partition(instance_id)
         .build();
 
+    // TODO - fix challenge mapping (Vec<u8>?)
     let challenge_command = DeviceChallengeCommandResponse {
         ok: true,
         uuid_appareil: command.uuid_appareil,
@@ -490,22 +429,6 @@ async fn device_challenge_command<M>(
     outbound.send_command(routing, challenge_command).await?;
 
     outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
-
-    //     // Emettre la commande de challenge
-    //     let message_challenge = json!({
-    //         "ok": true,
-    //         "uuid_appareil": &commande.uuid_appareil,
-    //         "challenge": &commande.challenge,
-    //         "cle_publique": doc_appareil.cle_publique,
-    //         "fingerprint": doc_appareil.fingerprint,
-    //     });
-    //     let routage = RoutageMessageAction::builder("senseurspassifs_relai", "challengeAppareil", vec![Securite::L2Prive])
-    //         .partition(instance_id)
-    //         .blocking(false)
-    //         .build();
-    //     middleware.transmettre_commande(routage, &message_challenge).await?;
-    //
-    //     Ok(Some(middleware.reponse_ok(None, None)?))
 }
 
 async fn sign_device_command<M>(
