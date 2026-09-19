@@ -12,12 +12,13 @@ use millegrilles_common_rust::v3::models::ErrorMessage;
 use millegrilles_common_rust::serde::{Deserialize, Serialize};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::optionepochseconds;
 use millegrilles_common_rust::serde_json::json;
+use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::tracing::{debug, info};
 use millegrilles_common_rust::v3::PkiService;
 use crate::common::*;
 use crate::flow::events::device_presence_event;
 use crate::flow::transactions::{SenseursPassifsTransactionService, TRANSACTION_APPAREIL_RESTAURER, TRANSACTION_APPAREIL_SUPPRIMER, TRANSACTION_MAJ_APPAREIL, TRANSACTION_MAJ_CONFIGURATION_USAGER, TRANSACTION_MAJ_NOEUD, TRANSACTION_MAJ_SENSEUR, TRANSACTION_SAUVEGARDER_PROGRAMME, TRANSACTION_SHOW_HIDE_SENSOR, TRANSACTION_SUPPRESSION_SENSEUR};
-use crate::models::{CommandeChallengeAppareil, CommandeInscrireAppareil, CommandeSignerAppareil, DocAppareil, ReponseCertificat, TransactionMajAppareil, TransactionShowHideSensor};
+use crate::models::{CommandeChallengeAppareil, CommandeInscrireAppareil, CommandeSignerAppareil, DocAppareil, EvenementPresenceAppareilUser, ReponseCertificat, TransactionMajAppareil, TransactionShowHideSensor};
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
@@ -43,7 +44,7 @@ pub async fn process_command<M>(
         COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, wrapper).await,
         COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
         COMMANDE_RESET_CERTIFICATS => todo!(),
-        COMMAND_DISCONNECT_RELAY => todo!(),
+        COMMAND_DISCONNECT_RELAY => disconnect_relay_command(mongo, outbound, wrapper).await,
         EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
         _ => {
             info!("Unknown action {} for process_command, skipping", action);
@@ -630,4 +631,56 @@ async fn sign_certificate<M>(
     } else {
         Err(CommonError::Str("Incorrect server response on device signing request (ok=false)"))?
     }
+}
+
+async fn disconnect_relay_command<M>(
+    mongo: &M,
+    outbound: &MessageOutboundFacade,
+    wrapper: MessageValidated,
+) -> Result<(), CommonError> where M: MongoDaoTyped
+{
+    if !(wrapper.certificate.verifier_roles_string(vec!["senseurspassifs_relai".to_string()])?) {
+        return outbound.respond(wrapper.delivery_info, ErrorMessage::err_code(401, "Access refused")).await
+    }
+    if !(wrapper.certificate.verifier_exchanges(vec![Securite::L2Prive])?) {
+        return outbound.respond(wrapper.delivery_info, ErrorMessage::err_code(401, "Access refused")).await
+    }
+
+    let instance_id = wrapper.certificate.get_common_name()?;
+
+    let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
+
+    // Emit a present event (disconnected) for all devices on the relay
+    let filtre = doc!{ "instance_id": &instance_id, "connecte": true };
+    let mut cursor = collection.find(filtre).await?;
+    while let Some(device_doc) = cursor.next().await {
+        let device_doc = device_doc?;
+        if let Some(user_id) = device_doc.user_id {
+            let evenement_reemis = EvenementPresenceAppareilUser {
+                uuid_appareil: device_doc.uuid_appareil,
+                user_id,
+                version: device_doc.version,
+                connecte: false
+            };
+            let routage = RoutageMessageAction::builder(
+                DOMAINE_NOM,
+                "presenceAppareil",
+                vec![Securite::L2Prive]
+            )
+                .partition(&evenement_reemis.user_id)
+                .build();
+            outbound.emit_event(routage, &evenement_reemis).await?;
+        }
+    }
+
+    // Reset connection status on all devices for the relay
+    let ops = doc! {
+        "$unset": {"instance_id": true},
+        "$set": {"connecte": false},
+        "$currentDate": {CHAMP_MODIFICATION: true},
+    };
+    let filtre = doc!{ "instance_id": instance_id, "connecte": true };
+    collection.update_many(filtre, ops).await?;
+
+    outbound.respond(wrapper.delivery_info, ErrorMessage::ok()).await
 }
