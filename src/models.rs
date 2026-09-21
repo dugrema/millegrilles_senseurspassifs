@@ -402,6 +402,7 @@ pub struct CommandeInscrireAppareil {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandeChallengeAppareil {
     pub uuid_appareil: String,
+    /// Four digits (values between 0-3, e.g. 3120)
     pub challenge: Vec<u8>,
 }
 

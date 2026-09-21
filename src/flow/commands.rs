@@ -395,9 +395,10 @@ async fn create_device_during_registration<M>(
 struct DeviceChallengeCommandResponse {
     ok: bool,
     uuid_appareil: String,
+    /// Four digits (between 0 and 3, e.g. 3120)
     challenge: Vec<u8>,
     cle_publique: String,
-    fingerprint: String,
+    fingerprint: Option<String>,
 }
 
 async fn device_challenge_command<M>(
@@ -422,22 +423,19 @@ async fn device_challenge_command<M>(
     };
 
     // Extract fields required for challenge
-    let (instance_id, cle_publique, fingerprint) = match (
+    let (instance_id, cle_publique) = match (
         device_doc.instance_id.as_ref(),
         device_doc.cle_publique.as_ref(),
-        device_doc.fingerprint.as_ref()
     ) {
         (
             Some(instance_id),
             Some(cle_publique),
-            Some(fingerprint)
         ) => (
             instance_id.clone(),
             cle_publique.clone(),
-            fingerprint.clone()
         ),
         _ => {
-            debug!("Device doc missing some fields (instance_id, cle_publique, fingerprint): {:?}", device_doc);
+            debug!("Device doc missing some fields (instance_id, cle_publique): {:?}", device_doc);
             return outbound.respond(wrapper.delivery_info, ErrorMessage::err("Public key/fingerprint not initialized")).await
         }
     };
@@ -451,13 +449,12 @@ async fn device_challenge_command<M>(
         .partition(instance_id)
         .build();
 
-    // TODO - fix challenge mapping (Vec<u8>?)
     let challenge_command = DeviceChallengeCommandResponse {
         ok: true,
         uuid_appareil: command.uuid_appareil,
         challenge: command.challenge,
         cle_publique,
-        fingerprint,
+        fingerprint: device_doc.fingerprint,
     };
     outbound.send_command(routing, challenge_command).await?;
 
