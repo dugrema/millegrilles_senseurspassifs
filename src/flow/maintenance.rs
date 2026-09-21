@@ -1,4 +1,4 @@
-use crate::common::{COLLECTIONS_APPAREILS, DOMAINE_NOM};
+use crate::common::{COLLECTIONS_APPAREILS, DOMAINE_NOM, INDEX_APPAREILS_DERNIERE_LECTURE};
 use crate::flow::readings::generate_readings_for_transactions;
 use crate::flow::transactions::SenseursPassifsTransactionService;
 use crate::models::{DocAppareil, EvenementPresenceAppareilUser};
@@ -11,6 +11,7 @@ use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
 use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::mongo_dao::MongoDaoTyped;
+use millegrilles_common_rust::mongodb::options::Hint;
 use millegrilles_common_rust::tracing::{debug, error, info, warn};
 use millegrilles_common_rust::v3::{BackupService, PresenceService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
@@ -122,7 +123,7 @@ pub async fn validate_ticker(trigger: &MessageValidated) -> Result<(), CommonErr
 }
 
 async fn mark_devices_offline<M>(mongo: &M, outbound: &MessageOutboundFacade) -> Result<(), CommonError> where M: MongoDaoTyped {
-    let expired = Utc::now() - Duration::minutes(1);
+    let expired = Utc::now() - Duration::seconds(110);
 
     let filtre = doc! {
         "connecte": true,
@@ -130,7 +131,10 @@ async fn mark_devices_offline<M>(mongo: &M, outbound: &MessageOutboundFacade) ->
     };
 
     let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
-    let mut cursor = collection.find(filtre.clone()).await?;
+    let mut cursor = collection
+        .find(filtre.clone())
+        .hint(Hint::Name(INDEX_APPAREILS_DERNIERE_LECTURE.to_string()))
+        .await?;
     while cursor.advance().await? {
         let device = cursor.deserialize_current()?;
         // Emit event for device

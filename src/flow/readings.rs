@@ -211,9 +211,7 @@ async fn update_device_current_value(
     let mut set_ops = doc! {
         CHAMP_INSTANCE_ID: &instance_id,
         "connecte": true,
-        // TODO - fix date duplication
         "derniere_lecture": most_recent_reading,
-        "derniere_lecture_dt": most_recent_reading,
     };
     for (senseur_id, lecture_senseur) in &reading.lectures_senseurs {
         set_ops.insert(format!("senseurs.{}", senseur_id), bson::serialize_to_document(&lecture_senseur)?);
