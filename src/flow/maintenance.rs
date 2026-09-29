@@ -51,19 +51,13 @@ pub async fn process_ticker_job<M>(
         }
     }
 
-    // if minute % 10 == 2 {
-    {
+    if minute % 10 == 2 {
+    // {
         // Aggregate readings into transactions
         if let Err(e) = generate_readings_for_transactions(mongo, transaction).await {
             error!("Error generating readings transactions: {:?}", e);
         }
     }
-
-    //         if minute == 28 && heure % 12 == 4 {
-    //             if let Err(e) = maintain_device_certificates(middleware).await {
-    //                 error!("traiter_cedule Error maintain_device_certificates : {:?}", e);
-    //             }
-    //         }
 
     if minute % 30 == 4 {
     // {
