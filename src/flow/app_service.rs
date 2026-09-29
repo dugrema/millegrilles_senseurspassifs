@@ -316,6 +316,7 @@ impl ApplicationService {
             COLLECTION_NAME_REDOLOG,
             COLLECTION_NAME_TRACKING,
             resume,
+            false,
             version,
             master_key,
         ).await?;
