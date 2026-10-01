@@ -95,7 +95,7 @@ impl AppContext {
         ));
 
         info!("Configure middleware resources : queues, index, tables, ...");
-        app_service.configure(messaging.as_ref(), config.as_ref()).await?;
+        app_service.configure(messaging.as_ref()).await?;
 
         info!("Connect services, start maintenance threads");
         start_threads(
