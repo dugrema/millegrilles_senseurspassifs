@@ -20,7 +20,9 @@ use millegrilles_common_rust::v3::models::ErrorMessage;
 use millegrilles_common_rust::v3::{BackupService, ChiffrageService, PkiService, PresenceService};
 use millegrilles_common_rust::{bson, serde_json};
 use millegrilles_common_rust::common_messages::BackupEvent;
+use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::MessageKind;
 use crate::external::mongo::COLLECTION_NAME_REDOLOG;
+use crate::external::mq::EVENT_KEYMASTER_CERTIFICATE;
 
 pub const COMMANDE_INSCRIRE_APPAREIL: &str = "inscrireAppareil";
 pub const COMMANDE_CHALLENGE_APPAREIL: &str = "challengeAppareil";
@@ -41,20 +43,37 @@ pub async fn process_command<M>(
         Some(action) => action,
         None => return outbound.respond(wrapper.delivery_info, ErrorMessage::err("No action provided in command")).await
     };
+    
+    match wrapper.message.kind {
+        MessageKind::Commande => {
+            match action {
+                COMMANDE_INSCRIRE_APPAREIL => register_device_command(mongo, outbound, wrapper).await,
+                COMMANDE_CHALLENGE_APPAREIL => device_challenge_command(mongo, outbound, wrapper).await,
+                COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, transaction, wrapper).await,
+                COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
+                COMMAND_DISCONNECT_RELAY => disconnect_relay_command(mongo, outbound, wrapper).await,
+                EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
+                REQUETE_CERT_MAITREDESCLES => receive_keymaster_certificate(chiffrage, wrapper),
 
-    match action {
-        COMMANDE_INSCRIRE_APPAREIL => register_device_command(mongo, outbound, wrapper).await,
-        COMMANDE_CHALLENGE_APPAREIL => device_challenge_command(mongo, outbound, wrapper).await,
-        COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, transaction, wrapper).await,
-        COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
-        COMMAND_DISCONNECT_RELAY => disconnect_relay_command(mongo, outbound, wrapper).await,
-        EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
-        REQUETE_CERT_MAITREDESCLES => receive_keymaster_certificate(chiffrage, wrapper),
-
-        // Obsolete commands
-        COMMANDE_RESET_CERTIFICATS => outbound.respond(wrapper.delivery_info, ErrorMessage::err("resetCertificatsAppareils command is obsolete")).await,
+                // Obsolete commands
+                COMMANDE_RESET_CERTIFICATS => outbound.respond(wrapper.delivery_info, ErrorMessage::err("resetCertificatsAppareils command is obsolete")).await,
+                _ => {
+                    info!("Unknown action {} for process_command, skipping", action);
+                    Ok(())
+                }
+            }
+        },
+        MessageKind::Evenement => {
+            match action {
+                EVENT_KEYMASTER_CERTIFICATE => save_keymaster_certificate(chiffrage, wrapper).await,
+                _ => {
+                    info!("Unknown event {} in process_command, skipping", action);
+                    Ok(())
+                }
+            }
+        },
         _ => {
-            info!("Unknown action {} for process_command, skipping", action);
+            info!("Unhandled message type with action {} in process_command, skipping", action);
             Ok(())
         }
     }
@@ -707,4 +726,15 @@ async fn trigger_complete_backup(
             Err(e)
         }
     }
+}
+
+async fn save_keymaster_certificate(
+    chiffrage: &dyn ChiffrageService,
+    wrapper: MessageValidated,
+) -> Result<(), CommonError> {
+    debug!("Saving keymaster certificate for encryption/fiche");
+    if let Err(e) = chiffrage.add_encryption_publickey(wrapper.certificate) {
+        warn!("Error saving keymaster certificate: {:?}", e);
+    }
+    Ok(())
 }
