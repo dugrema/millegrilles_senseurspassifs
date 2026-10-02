@@ -59,7 +59,7 @@ impl SenseursPassifsTransactionService {
         self.transaction.process_transaction(wrapper, session).await
     }
 
-    pub async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<(), CommonError> {
+    pub async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<String, CommonError> {
         self.transaction.process_value(domain, action, value, session).await
     }
 }

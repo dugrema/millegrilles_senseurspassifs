@@ -4,7 +4,7 @@ use millegrilles_common_rust::certificats::build_store_path_v2;
 use millegrilles_common_rust::chiffrage_cle::CleChiffrageHandlerImpl;
 use millegrilles_common_rust::configuration::{ConfigDb, ConfigMessages, charger_configuration, charger_configuration_mongo};
 use millegrilles_common_rust::error::Error as CommonError;
-use millegrilles_common_rust::mongo_dao::{MongoDaoImpl, initialiser};
+use millegrilles_common_rust::mongo_dao::{initialiser_v3, MongoDaoImpl};
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_util::sync::CancellationToken;
 use millegrilles_common_rust::tracing::{debug, info};
@@ -46,7 +46,7 @@ impl AppContext {
         let format = Arc::new(FormatServiceImpl::new(config.clone()));
 
         let mongo = Arc::new(
-            initialiser(config.get_configuration_pki(), config.get_configuraiton_mongo())?
+            initialiser_v3(config.as_ref(), config.get_configuraiton_mongo()).await?
         );
 
         // Facades
