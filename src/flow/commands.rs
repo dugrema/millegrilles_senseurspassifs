@@ -45,6 +45,15 @@ pub async fn process_command<M>(
     };
     
     match wrapper.message.kind {
+        MessageKind::Requete => {
+            match action {
+                COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, transaction, wrapper).await,
+                _ => {
+                    info!("Unknown action {} for process_command (request section), skipping", action);
+                    Ok(())
+                }
+            }
+        },
         MessageKind::Commande => {
             match action {
                 COMMANDE_INSCRIRE_APPAREIL => register_device_command(mongo, outbound, wrapper).await,
@@ -73,7 +82,7 @@ pub async fn process_command<M>(
             }
         },
         _ => {
-            info!("Unhandled message type with action {} in process_command, skipping", action);
+            info!("Unhandled message type {:?} with action {} in process_command, skipping", wrapper.message.kind, action);
             Ok(())
         }
     }
