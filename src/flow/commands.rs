@@ -334,7 +334,16 @@ async fn register_device_command<M>(
     let collection = mongo.get_collection_typed::<DocAppareil>(COLLECTIONS_APPAREILS)?;
     let filtre = doc! { CHAMP_USER_ID: &command.user_id, CHAMP_UUID_APPAREIL: &command.uuid_appareil };
     let device_doc = match collection.find_one(filtre.clone()).await? {
-        Some(device_doc) => device_doc,
+        Some(mut device_doc) => {
+            if device_doc.instance_id.as_ref() != Some(&command.instance_id) {
+                debug!("Updating instance_id to {} for device {}", command.instance_id, command.uuid_appareil);
+                // Update the instance_id (it can change when the device connects)
+                collection.update_one(filtre.clone(), doc! {"instance_id": &command.instance_id}).await?;
+                device_doc.instance_id = Some(command.instance_id.clone());
+            }
+            // Return existing device
+            device_doc
+        },
         None => create_device_during_registration(mongo, &command).await?
     };
 
@@ -401,12 +410,18 @@ async fn create_device_during_registration<M>(
         version: None,
     };
 
-    let mut set_on_insert = bson::serialize_to_document(&doc_appareil)?;
-    set_on_insert.insert(CHAMP_CREATION, Utc::now());
+    // let mut set_on_insert = bson::serialize_to_document(&doc_appareil)?;
+    // set_on_insert.insert(CHAMP_CREATION, Utc::now());
+    // set_on_insert.remove("instance_id");    // Set the instance_id every time
 
     let ops = doc! {
-        "$setOnInsert": set_on_insert,
+        "$setOnInsert": {
+            "uuid_appareil": &doc_appareil.uuid_appareil,
+            "user_id": &doc_appareil.user_id,
+            CHAMP_CREATION: bson::datetime::DateTime::now(),
+        },
         "$set": {
+            "instance_id": &doc_appareil.instance_id,     // The command can be used to renew an expired device on different instance_id
             CHAMP_MODIFICATION: Utc::now(),
         }
     };
