@@ -475,7 +475,12 @@ async fn device_challenge_command<M>(
     )
         .blocking(false)
         .partition(instance_id)
+        // reply_to and correlation_id are required for commands
+        .reply_to("NOREPLY")
+        .correlation_id("NOREPLY")
         .build();
+
+    debug!("Emitting challenge to {:?}", routing);
 
     let challenge_command = DeviceChallengeCommandResponse {
         ok: true,
