@@ -338,7 +338,7 @@ async fn register_device_command<M>(
             if device_doc.instance_id.as_ref() != Some(&command.instance_id) {
                 debug!("Updating instance_id to {} for device {}", command.instance_id, command.uuid_appareil);
                 // Update the instance_id (it can change when the device connects)
-                collection.update_one(filtre.clone(), doc! {"instance_id": &command.instance_id}).await?;
+                collection.update_one(filtre.clone(), doc! {"$set": {"instance_id": &command.instance_id}}).await?;
                 device_doc.instance_id = Some(command.instance_id.clone());
             }
             // Return existing device
