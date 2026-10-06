@@ -2,7 +2,7 @@ use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::error::Error as CommonError;
 use millegrilles_common_rust::mongo_dao::MongoDao;
-use millegrilles_common_rust::tracing::{error, warn};
+use millegrilles_common_rust::tracing::{debug, error, warn};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::constantes::*;
@@ -21,6 +21,7 @@ pub async fn device_presence_event(
 ) -> Result<(), CommonError> {
     let evenement: EvenementPresenceAppareil = wrapper.message.deserialize()?;
     let certificate = wrapper.certificate.as_ref();
+    debug!("device_presence_event {:?}", evenement);
 
     if ! certificate.verifier_exchanges(vec![Securite::L2Prive])? {
         warn!("evenement_appareil_presence Evenement presenceAppareil recu sans securite 2.prive, SKIP");

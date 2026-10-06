@@ -88,11 +88,11 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, COMMANDE_CONFIRMER_RELAI), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, COMMANDE_RESET_CERTIFICATS), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, COMMAND_DISCONNECT_RELAY), exchange: Securite::L2Prive },
-                ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, EVENEMENT_PRESENCE_APPAREIL), exchange: Securite::L2Prive },
-                ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, EVENEMENT_PRESENCE_APPAREIL), exchange: Securite::L2Prive },
-                ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES), exchange: Securite::L1Public },
 
                 // Events
+                ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, EVENEMENT_PRESENCE_APPAREIL), exchange: Securite::L2Prive },
+                ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, EVENEMENT_PRESENCE_APPAREIL), exchange: Securite::L2Prive },
+                // ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES), exchange: Securite::L1Public },
                 ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAIN_KEYMASTER, EVENT_KEYMASTER_CERTIFICATE), exchange: Securite::L1Public },
             ],
             ttl: Some(QUEUE_TTL_DEFAULT),

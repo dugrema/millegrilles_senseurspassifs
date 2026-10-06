@@ -49,7 +49,7 @@ pub async fn process_command<M>(
             match action {
                 COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, transaction, wrapper).await,
                 _ => {
-                    info!("Unknown action {} for process_command (request section), skipping", action);
+                    warn!("Unknown action {} for process_command (request section), skipping", action);
                     Ok(())
                 }
             }
@@ -61,28 +61,28 @@ pub async fn process_command<M>(
                 COMMANDE_SIGNER_APPAREIL => sign_device_command(pki, mongo, outbound, transaction, wrapper).await,
                 COMMANDE_CONFIRMER_RELAI => confirm_relai(mongo, outbound, wrapper).await,
                 COMMAND_DISCONNECT_RELAY => disconnect_relay_command(mongo, outbound, wrapper).await,
-                EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
-                REQUETE_CERT_MAITREDESCLES => receive_keymaster_certificate(chiffrage, wrapper),
 
                 // Obsolete commands
                 COMMANDE_RESET_CERTIFICATS => outbound.respond(wrapper.delivery_info, ErrorMessage::err("resetCertificatsAppareils command is obsolete")).await,
                 _ => {
-                    info!("Unknown action {} for process_command, skipping", action);
+                    warn!("Unknown action {} for process_command, skipping", action);
                     Ok(())
                 }
             }
         },
         MessageKind::Evenement => {
             match action {
-                EVENT_KEYMASTER_CERTIFICATE => save_keymaster_certificate(chiffrage, wrapper).await,
+                EVENT_KEYMASTER_CERTIFICATE => receive_keymaster_certificate(chiffrage, wrapper),
+                // REQUETE_CERT_MAITREDESCLES => receive_keymaster_certificate(chiffrage, wrapper),
+                EVENEMENT_PRESENCE_APPAREIL => device_presence_event(mongo, outbound, wrapper).await,
                 _ => {
-                    info!("Unknown event {} in process_command, skipping", action);
+                    warn!("Unknown event {} in process_command, skipping", action);
                     Ok(())
                 }
             }
         },
         _ => {
-            info!("Unhandled message type {:?} with action {} in process_command, skipping", wrapper.message.kind, action);
+            warn!("Unhandled message type {:?} with action {} in process_command, skipping", wrapper.message.kind, action);
             Ok(())
         }
     }
@@ -757,13 +757,13 @@ async fn trigger_complete_backup(
     }
 }
 
-async fn save_keymaster_certificate(
-    chiffrage: &dyn ChiffrageService,
-    wrapper: MessageValidated,
-) -> Result<(), CommonError> {
-    debug!("Saving keymaster certificate for encryption/fiche");
-    if let Err(e) = chiffrage.add_encryption_publickey(wrapper.certificate) {
-        warn!("Error saving keymaster certificate: {:?}", e);
-    }
-    Ok(())
-}
+// async fn save_keymaster_certificate(
+//     chiffrage: &dyn ChiffrageService,
+//     wrapper: MessageValidated,
+// ) -> Result<(), CommonError> {
+//     debug!("Saving keymaster certificate for encryption/fiche");
+//     if let Err(e) = chiffrage.add_encryption_publickey(wrapper.certificate) {
+//         warn!("Error saving keymaster certificate: {:?}", e);
+//     }
+//     Ok(())
+// }
