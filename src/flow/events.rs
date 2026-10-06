@@ -43,7 +43,11 @@ pub async fn device_presence_event(
         CHAMP_USER_ID: &evenement.user_id,
     };
     let deconnecte = match evenement.deconnecte.as_ref() {Some(b)=>b.to_owned(), None => false};
-    let set_ops = doc!{CHAMP_CONNECTE: !deconnecte, CHAMP_VERSION: evenement.version.as_ref()};
+    let mut set_ops = doc!{CHAMP_CONNECTE: !deconnecte};
+    // Capture updated version when provided
+    if let Some(version) = evenement.version.as_ref() {
+        set_ops.insert(CHAMP_VERSION, version);
+    }
     let ops = doc!{
         "$set": set_ops,
         "$currentDate": {CHAMP_MODIFICATION: true, CHAMP_MAJ_CONNEXION: true}
