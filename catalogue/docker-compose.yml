@@ -27,7 +27,7 @@ services:
       - CAFILE=/run/secrets/millegrille.pem
       - MG_REDIS_URL=rediss://client_rust@redis:6379#insecure
       - MG_REDIS_PASSWORD_FILE=/run/secrets/passwd.redis.txt
-      - RUST_LOG=warn
+      - RUST_LOG=error,millegrilles_senseurspassifs=info,millegrilles_common_rust=warn
     volumes:
       - ${MILLEGRILLES_ROOT}/var/backup/domains:/var/opt/millegrilles/archives
     deploy:

@@ -18,10 +18,11 @@ use std::sync::Arc;
 
 pub async fn restore_from_backup(
     app_service: Arc<ApplicationService>,
+    no_resume: bool,
     master_key: &PKey<Private>,
     shutdown_token: CancellationToken
 ) {
-    let return_code = match restore(app_service.as_ref(), master_key, true).await {
+    let return_code = match restore(app_service.as_ref(), master_key, ! no_resume).await {
         Ok(()) => {
             info!("Restoration process complete - shutting down");
             0

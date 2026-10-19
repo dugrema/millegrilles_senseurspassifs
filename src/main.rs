@@ -105,6 +105,10 @@ pub struct Cli {
     #[arg(long)]
     pub restore: bool,
 
+    /// Clear the tracking and data tables before starting the restore operation.
+    #[arg(long)]
+    pub noresume: bool,
+
     /// Path to the master key file
     #[arg(short, long)]
     pub capath: Option<String>,
