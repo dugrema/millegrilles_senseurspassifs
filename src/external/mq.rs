@@ -1,7 +1,8 @@
 use millegrilles_common_rust::constantes::*;
 use millegrilles_common_rust::error::Error as CommonError;
-use millegrilles_common_rust::rabbitmq_dao::{ConfigQueue, ConfigRoutingExchange};
+use millegrilles_common_rust::rabbitmq_dao::ConfigRoutingExchange;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
+use millegrilles_common_rust::v3::models::ConfigQueueV3;
 use crate::common::*;
 use crate::flow::commands::*;
 use crate::flow::requests::*;
@@ -27,8 +28,8 @@ pub const EVENT_KEYMASTER_CERTIFICATE: &str = "certMaitreDesCles";
 pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
     // Configure the queues and add to messaging service (will spawn consumer threads)
     mq.add_named_queue(
-        ConfigQueue {
-            nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_TICKER),
+        ConfigQueueV3 {
+            queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_TICKER)),
             routing_keys: vec![
                 ConfigRoutingExchange { routing_key: "evenement.ceduleur.ping".to_string(), exchange: Securite::L1Public }
             ],
@@ -38,8 +39,8 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
         })?;
 
     mq.add_named_queue(
-        ConfigQueue {
-            nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_REQUESTS),
+        ConfigQueueV3 {
+            queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_REQUESTS)),
             routing_keys: vec![
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_APPAREILS_USAGER), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_APPAREIL_DISPLAY_CONFIGURATION), exchange: Securite::L2Prive },
@@ -57,8 +58,8 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
         })?;
 
     mq.add_named_queue(
-        ConfigQueue {
-            nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_REPORTS),
+        ConfigQueueV3 {
+            queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_REPORTS)),
             routing_keys: vec![
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_STATISTIQUES_SENSEUR), exchange: Securite::L2Prive },
             ],
@@ -68,8 +69,8 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
         })?;
 
     mq.add_named_queue(
-        ConfigQueue {
-            nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_DEVICE_REQUESTS),
+        ConfigQueueV3 {
+            queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_DEVICE_REQUESTS)),
             routing_keys: vec![
                 ConfigRoutingExchange { routing_key: format!("requete.{}.{}", DOMAINE_NOM, REQUETE_GET_TIMEZONE_APPAREIL), exchange: Securite::L2Prive },
             ],
@@ -79,8 +80,8 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
         })?;
 
     mq.add_named_queue(
-        ConfigQueue {
-            nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_COMMANDS),
+        ConfigQueueV3 {
+            queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_COMMANDS)),
             routing_keys: vec![
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, COMMANDE_INSCRIRE_APPAREIL), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, COMMANDE_CHALLENGE_APPAREIL), exchange: Securite::L2Prive },
@@ -101,8 +102,8 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
         })?;
 
     mq.add_named_queue(
-        ConfigQueue {
-            nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_TRANSACTIONS),
+        ConfigQueueV3 {
+            queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_TRANSACTIONS)),
             routing_keys: vec![
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, TRANSACTION_MAJ_SENSEUR), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, TRANSACTION_MAJ_NOEUD), exchange: Securite::L2Prive },
@@ -125,8 +126,8 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
         })?;
 
     mq.add_named_queue(
-        ConfigQueue {
-            nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_READINGS),
+        ConfigQueueV3 {
+            queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_READINGS)),
             routing_keys: vec![
                 ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", DOMAINE_NOM, EVENEMENT_LECTURE), exchange: Securite::L2Prive },
                 ConfigRoutingExchange { routing_key: format!("evenement.{}.{}", ROLE_RELAI_NOM, EVENEMENT_LECTURE), exchange: Securite::L2Prive },
@@ -136,8 +137,8 @@ pub fn init_queues(mq: &MessagingServiceImpl) -> Result<(), CommonError> {
             autodelete: false,
         })?;
 
-    mq.add_named_queue(ConfigQueue {
-        nom_queue: format!("{}/{}", DOMAINE_NOM, QUEUE_BACKUP),
+    mq.add_named_queue(ConfigQueueV3 {
+        queue_name: Some(format!("{}/{}", DOMAINE_NOM, QUEUE_BACKUP)),
         routing_keys: vec![
             ConfigRoutingExchange { routing_key: format!("requete.{}.getNombreTransactions", DOMAINE_NOM), exchange: Securite::L2Prive },
             ConfigRoutingExchange { routing_key: format!("commande.{}.{}", DOMAINE_NOM, COMMANDE_DECLENCHER_BACKUP), exchange: Securite::L3Protege },
