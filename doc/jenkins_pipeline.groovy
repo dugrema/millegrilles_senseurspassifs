@@ -6,7 +6,7 @@ pipeline {
         string(defaultValue: '2026.7', name: 'VERSION')
         string(defaultValue: 'jenkins-maple', name: 'CREDENTIALS_ID')
         string(defaultValue: 'ssh://git@git.maple.maceroc.com/git/millegrilles_senseurspassifs', name: 'GIT_URL')
-        string(defaultValue: 'nexus.maple.maceroc.com/millegrilles/senseurspassifs_rust', name: 'DOCKER_IMAGE')
+        string(defaultValue: 'nexus.maple.maceroc.com/docker_millegrilles/millegrilles/senseurspassifs_rust', name: 'DOCKER_IMAGE')
     }
 
     environment {
