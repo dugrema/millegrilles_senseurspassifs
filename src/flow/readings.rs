@@ -19,7 +19,7 @@ use millegrilles_common_rust::v3::PkiService;
 use millegrilles_common_rust::{bson, serde_json};
 use std::cmp::max;
 use millegrilles_common_rust::mongodb::error::ErrorKind;
-use millegrilles_common_rust::mongodb::error::WriteFailure::WriteError;
+use millegrilles_common_rust::tokio_stream::StreamExt;
 
 pub async fn process_reading<M>(
     pki: &dyn PkiService,
@@ -330,34 +330,42 @@ pub async fn generate_readings_for_transactions<M>(
         "heure": {"$lte": date_aggregation},
     };
 
-    let mut session = mongo.get_session().await?;
-    session.start_transaction().await?;
-
     let collection = mongo.get_collection_typed::<LecturesCumulees>(COLLECTIONS_LECTURES)?;
-    let mut curseur = collection.find(filtre).session(&mut session).await?;
-    while let Some(row) = curseur.next(&mut session).await {
+    let mut curseur = collection.find(filtre).await?;
+    while let Some(row) = curseur.next().await {
         let row = row?;
+        let mut session = mongo.get_session().await?;
+        session.start_transaction().await?;
         if let Err(e) = generate_reading_transactions(mongo, transaction, &row, &mut session).await {
             session.abort_transaction().await?;
 
-            // Check if the error is due to a duplication of record - this may happen because the
+            // Check if the error is due to a duplication of records - this may happen because the
             // sensor used the wrong date (e.g. restart after power outage, bad NTP)
+            let mut is_duplicate_error = false;
             if let Error::MongDb(e) = &e {
-                if matches!(
-                    *e.kind,
-                    ErrorKind::Write(WriteError(millegrilles_common_rust::mongodb::error::WriteError { code: 11000, .. }))
-                ) {
+                if let ErrorKind::InsertMany(e) = &(*e.kind) {
+                    if let Some(errors) = &e.write_errors {
+                        for error in errors {
+                            if error.code == 11000 {
+                                is_duplicate_error = true;
+                            }
+                        }
+                    }
+                }
+                if is_duplicate_error {
                     warn!("New transaction for readings trying to duplicate entry, dropping conflicting data: {:?}", e);
                     session.start_transaction().await?;
                     cleanup_readings_for_device(mongo, &row, &mut session).await?;
                     session.commit_transaction().await?;
+                    continue;  // Keep going
                 }
             }
 
             return Err(e);
         }
     }
-    session.commit_transaction().await?;
+
+    // session.commit_transaction().await?;
 
     Ok(())
 }
