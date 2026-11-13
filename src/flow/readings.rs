@@ -363,6 +363,8 @@ pub async fn generate_readings_for_transactions<M>(
 
             return Err(e);
         }
+
+        session.commit_transaction().await?;
     }
 
     // session.commit_transaction().await?;
