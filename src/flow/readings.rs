@@ -5,7 +5,7 @@ use millegrilles_common_rust::bson::doc;
 use millegrilles_common_rust::certificats::VerificateurPermissions;
 use millegrilles_common_rust::chrono::{DateTime, Duration, Timelike, Utc};
 use millegrilles_common_rust::constantes::*;
-use millegrilles_common_rust::error::Error as CommonError;
+use millegrilles_common_rust::error::{Error as CommonError, Error};
 use millegrilles_common_rust::generateur_messages::RoutageMessageAction;
 use millegrilles_common_rust::math::{arrondir, compter_fract_digits};
 use millegrilles_common_rust::millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
@@ -18,6 +18,8 @@ use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFaca
 use millegrilles_common_rust::v3::PkiService;
 use millegrilles_common_rust::{bson, serde_json};
 use std::cmp::max;
+use millegrilles_common_rust::mongodb::error::ErrorKind;
+use millegrilles_common_rust::mongodb::error::WriteFailure::WriteError;
 
 pub async fn process_reading<M>(
     pki: &dyn PkiService,
@@ -334,8 +336,22 @@ pub async fn generate_readings_for_transactions<M>(
     let collection = mongo.get_collection_typed::<LecturesCumulees>(COLLECTIONS_LECTURES)?;
     let mut curseur = collection.find(filtre).session(&mut session).await?;
     while let Some(row) = curseur.next(&mut session).await {
-        if let Err(e) = generate_reading_transactions(mongo, transaction, row?, &mut session).await {
+        let row = row?;
+        if let Err(e) = generate_reading_transactions(mongo, transaction, &row, &mut session).await {
             session.abort_transaction().await?;
+
+            if let Error::MongDb(e) = &e {
+                if matches!(
+                    *e.kind,
+                    ErrorKind::Write(WriteError(millegrilles_common_rust::mongodb::error::WriteError { code: 11000, .. }))
+                ) {
+                    warn!("New transaction for readings trying to duplicate entry, dropping conflicting data: {:?}", e);
+                    session.start_transaction().await?;
+                    cleanup_readings_for_device(mongo, &row, &mut session).await?;
+                    session.commit_transaction().await?;
+                }
+            }
+
             return Err(e);
         }
     }
@@ -347,7 +363,7 @@ pub async fn generate_readings_for_transactions<M>(
 async fn generate_reading_transactions<M>(
     mongo: &M,
     transaction: &SenseursPassifsTransactionService,
-    readings: LecturesCumulees,
+    readings: &LecturesCumulees,
     session: &mut ClientSession,
 ) -> Result<(), CommonError> where M: MongoDaoTyped {
 
@@ -357,7 +373,7 @@ async fn generate_reading_transactions<M>(
     let hour = readings.heure;
     debug!("Hour : {:?}", hour);
 
-    let stats = calculate_average(&readings)?;
+    let stats = calculate_average(readings)?;
 
     let transaction_value = TransactionLectureHoraire {
         heure: hour,
@@ -377,7 +393,7 @@ async fn generate_reading_transactions<M>(
         Some(session)
     ).await?;
 
-    cleanup_readings_for_device(mongo, &readings, &hour, session).await?;
+    cleanup_readings_for_device(mongo, readings, session).await?;
 
     Ok(())
 }
@@ -442,14 +458,13 @@ fn calculate_average(readings: &LecturesCumulees) -> Result<BasicStats, CommonEr
 async fn cleanup_readings_for_device(
     mongo: &dyn MongoDao,
     readings: &LecturesCumulees,
-    hour: &DateTime<Utc>,
     session: &mut ClientSession
 ) -> Result<(), CommonError> {
     let filtre = doc! {
         CHAMP_USER_ID: readings.user_id.as_str(),
         CHAMP_UUID_APPAREIL: readings.uuid_appareil.as_str(),
         "senseur_id": readings.senseur_id.as_str(),
-        "heure": &hour,
+        "heure": readings.heure,
     };
     let collection = mongo.get_collection(COLLECTIONS_LECTURES)?;
     collection.delete_one(filtre).session(session).await?;

@@ -13,7 +13,7 @@ use millegrilles_common_rust::tokio;
 use millegrilles_common_rust::tokio::task::JoinSet;
 use millegrilles_common_rust::tokio_stream::StreamExt;
 use millegrilles_common_rust::tracing::{debug, error, info};
-use millegrilles_common_rust::v3::{BackupService, ChiffrageService, PkiService};
+use millegrilles_common_rust::v3::{BackupService, ChiffrageService, ConfigService, PkiService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageInboundValidator;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use millegrilles_common_rust::v3::impls::messaging_service::MessagingServiceImpl;
@@ -25,6 +25,7 @@ use crate::flow::restore::rebuild_devices;
 
 /// Handles queue consumer threads, calls individual routing methods
 pub struct ApplicationService {
+    config: Arc<dyn ConfigService>,
     pki: Arc<dyn PkiService>,
     chiffrage: Arc<dyn ChiffrageService>,
     outbound: Arc<MessageOutboundFacade>,
@@ -35,6 +36,7 @@ pub struct ApplicationService {
 
 impl ApplicationService {
     pub fn new(
+        config: Arc<dyn ConfigService>,
         pki: Arc<dyn PkiService>,
         chiffrage: Arc<dyn ChiffrageService>,
         outbound: Arc<MessageOutboundFacade>,
@@ -43,6 +45,7 @@ impl ApplicationService {
         backup: Arc<dyn BackupService>,
     ) -> Self {
         Self {
+            config,
             pki,
             chiffrage,
             outbound,
@@ -104,6 +107,7 @@ impl ApplicationService {
             match result {
                 Ok(message) => {
                     if let Err(e) = process_ticker_job(
+                        self.config.as_ref(),
                         self.mongo.as_ref(),
                         self.outbound.as_ref(),
                         self.transaction.as_ref(),

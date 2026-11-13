@@ -86,6 +86,7 @@ impl AppContext {
         ));
 
         let app_service = Arc::new(ApplicationService::new(
+            config.clone(),
             security.clone(),
             security.clone(),
             outbound.clone(),

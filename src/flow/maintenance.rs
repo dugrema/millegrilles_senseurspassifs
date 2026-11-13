@@ -13,12 +13,13 @@ use millegrilles_common_rust::messages_generiques::MessageCedule;
 use millegrilles_common_rust::mongo_dao::MongoDaoTyped;
 use millegrilles_common_rust::mongodb::options::Hint;
 use millegrilles_common_rust::tracing::{debug, error, info, warn};
-use millegrilles_common_rust::v3::{BackupService, PresenceService};
+use millegrilles_common_rust::v3::{BackupService, ConfigService, PresenceService};
 use millegrilles_common_rust::v3::facades::message_inbound::MessageValidated;
 use millegrilles_common_rust::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::external::mongo::COLLECTION_NAME_REDOLOG;
 
 pub async fn process_ticker_job<M>(
+    config: &dyn ConfigService,
     mongo: &M,
     outbound: &MessageOutboundFacade,
     transaction: &SenseursPassifsTransactionService,
@@ -38,6 +39,9 @@ pub async fn process_ticker_job<M>(
     let minute = trigger_value.get_date().minute();
     let day = trigger_value.get_date().weekday();
 
+    // Run every minute when dev flag is set
+    let is_dev = config.get_configuration_instance().dev;
+
     debug!("ticker_job_ca for h:{} m:{}",hour,minute);
 
     // Emit domain presence
@@ -45,13 +49,15 @@ pub async fn process_ticker_job<M>(
         warn!("Error emitting domain presence: {}", e);
     }
 
-    if minute % 2 == 0 {
+    if minute % 2 == 0 || is_dev {
         if let Err(e) = mark_devices_offline(mongo, outbound).await {
             error!("Error mark_devices_offline : {:?}", e);
         }
     }
 
-    if minute % 10 == 2 {
+    // 5th minute after the hour is when the previous hour is ready, so minute 6 to pick them up
+    // every 20 minutes for recovery (e.g. when restarting)
+    if minute % 20 == 6 || is_dev {
     // {
         // Aggregate readings into transactions
         if let Err(e) = generate_readings_for_transactions(mongo, transaction).await {
@@ -59,7 +65,7 @@ pub async fn process_ticker_job<M>(
         }
     }
 
-    if minute % 30 == 4 {
+    if minute % 30 == 4 || is_dev {
     // {
         // Run complete backup once a week on Sunday at 7:04 UTC.
         // This concatenates all incremental files and rotates backup files. May produce final file.
@@ -91,7 +97,7 @@ pub async fn process_ticker_job<M>(
     }
 
     // Additional file upload task in case backups keep failing.
-    if minute == 13 && hour % 8 == 1 {
+    if minute == 13 && hour % 8 == 1 || is_dev {
         // {
         if let Err(e) = backup.transfer_backup_files_to_filehost(DOMAINE_NOM).await {
             error!("Error uploading backup files to filehost: {}", e);
