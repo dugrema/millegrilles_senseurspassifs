@@ -340,6 +340,8 @@ pub async fn generate_readings_for_transactions<M>(
         if let Err(e) = generate_reading_transactions(mongo, transaction, &row, &mut session).await {
             session.abort_transaction().await?;
 
+            // Check if the error is due to a duplication of record - this may happen because the
+            // sensor used the wrong date (e.g. restart after power outage, bad NTP)
             if let Error::MongDb(e) = &e {
                 if matches!(
                     *e.kind,
