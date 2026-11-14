@@ -5,6 +5,11 @@ FROM nexus.maple.maceroc.com/docker_proxy/rust:1-trixie AS builder
 ARG APT_PROXY
 ARG CARGO_REGISTRY_URL
 
+# Import SSH keys from local git server
+RUN mkdir -p -m 0700 /root/.ssh && \
+    ssh-keyscan -H git.maple.maceroc.com >> /root/.ssh/known_hosts && \
+    chmod 600 /root/.ssh/known_hosts
+
 # Install build dependencies
 RUN if [ -n "$APT_PROXY" ]; then \
          echo "Acquire::http::Proxy \"$APT_PROXY\";" > /etc/apt/apt.conf.d/01proxy; \
@@ -25,7 +30,8 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 
 # Create a dummy project to pre-build dependencies
-RUN mkdir src && \
+RUN --mount=type=ssh \
+    mkdir src && \
     echo "fn main() {println!(\"dummy project\");}" > src/main.rs && \
     cargo build --release && \
     rm -rf src && \
