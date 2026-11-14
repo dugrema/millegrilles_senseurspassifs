@@ -24,7 +24,6 @@ all: package
 
 docker-build:
 	docker build \
-		--ssh default \
 		--build-arg APT_PROXY=$(APT_PROXY) \
 		--build-arg CARGO_REGISTRY_URL=$(CARGO_REGISTRY_URL) \
 		-t $(DOCKER_IMAGE):$(VBUILD) .
